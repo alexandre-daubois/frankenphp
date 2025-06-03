@@ -1,0 +1,790 @@
+#include <php.h>
+#include <Zend/zend_API.h>
+
+#include "_cgo_export.h"
+#include "%s.h"
+#include "%s_arginfo.h"
+
+static int (*original_php_register_internal_extensions_func)(void) = NULL;
+
+go_object* zval_to_go_object(zval *obj) {
+    if (Z_TYPE_P(obj) != IS_OBJECT) {
+        return NULL;
+    }
+
+    zend_object *zobj = Z_OBJ_P(obj);
+    HashTable *properties = zobj->properties;
+
+    go_object *result = (go_object*)malloc(sizeof(go_object));
+    if (!result) {
+        return NULL;
+    }
+
+    result->class_name = NULL;
+    result->property_count = 0;
+    result->properties = NULL;
+
+    if (zobj->ce && zobj->ce->name) {
+        size_t class_name_len = ZSTR_LEN(zobj->ce->name);
+        result->class_name = (char*)malloc(class_name_len + 1);
+        if (!result->class_name) {
+            free(result);
+            return NULL;
+        }
+
+        memcpy(result->class_name, ZSTR_VAL(zobj->ce->name), class_name_len);
+        result->class_name[class_name_len] = '\0';
+    } else {
+        result->class_name = (char*)malloc(9);
+        if (!result->class_name) {
+            free(result);
+            return NULL;
+        }
+
+        strcpy(result->class_name, "stdClass");
+    }
+
+    if (properties) {
+        int count = zend_hash_num_elements(properties);
+        result->property_count = count;
+
+        if (count > 0) {
+            result->properties = (go_object_property**)calloc(count, sizeof(go_object_property*));
+            if (!result->properties) {
+                cleanup_go_object(result);
+                return NULL;
+            }
+
+            zend_string *key;
+            zval *val;
+            int i = 0;
+            ZEND_HASH_FOREACH_STR_KEY_VAL(properties, key, val) {
+                go_object_property *prop = (go_object_property*)malloc(sizeof(go_object_property));
+                if (!prop) {
+                    cleanup_go_object(result);
+                    return NULL;
+                }
+
+                prop->name = NULL;
+                prop->value = NULL;
+
+                if (key) {
+                    size_t key_len = ZSTR_LEN(key);
+                    prop->name = (char*)malloc(key_len + 1);
+                    if (!prop->name) {
+                        free(prop);
+                        cleanup_go_object(result);
+                        return NULL;
+                    }
+                    memcpy(prop->name, ZSTR_VAL(key), key_len);
+                    prop->name[key_len] = '\0';
+                } else {
+                    prop->name = (char*)malloc(1);
+                    if (!prop->name) {
+                        free(prop);
+                        cleanup_go_object(result);
+                        return NULL;
+                    }
+                    prop->name[0] = '\0';
+                }
+
+                go_value *go_val = (go_value*)malloc(sizeof(go_value));
+                if (!go_val) {
+                    cleanup_go_object_property(prop);
+                    cleanup_go_object(result);
+                    return NULL;
+                }
+
+                switch (Z_TYPE_P(val)) {
+                    case IS_STRING:
+                        go_val->value_type = 0; // string
+                        go_val->str_len = Z_STRLEN_P(val);
+                        go_val->data.str_val = (char*)malloc(go_val->str_len + 1);
+                        if (!go_val->data.str_val) {
+                            free(go_val);
+                            cleanup_go_object_property(prop);
+                            cleanup_go_object(result);
+                            return NULL;
+                        }
+                        memcpy(go_val->data.str_val, Z_STRVAL_P(val), go_val->str_len);
+                        go_val->data.str_val[go_val->str_len] = '\0';
+                        break;
+                    case IS_LONG:
+                        go_val->value_type = 1; // int
+                        go_val->data.int_val = Z_LVAL_P(val);
+                        break;
+                    case IS_DOUBLE:
+                        go_val->value_type = 2; // float
+                        go_val->data.float_val = Z_DVAL_P(val);
+                        break;
+                    case IS_TRUE:
+                    case IS_FALSE:
+                        go_val->value_type = 3; // bool
+                        go_val->data.bool_val = Z_TYPE_P(val) == IS_TRUE ? 1 : 0;
+                        break;
+                    case IS_ARRAY:
+                        go_val->value_type = 4; // array
+                        go_val->data.array_val = zval_to_go_array(val);
+                        if (!go_val->data.array_val && Z_ARRVAL_P(val) && zend_hash_num_elements(Z_ARRVAL_P(val)) > 0) {
+                            // Array conversion failed
+                            free(go_val);
+                            cleanup_go_object_property(prop);
+                            cleanup_go_object(result);
+                            return NULL;
+                        }
+                        break;
+                    case IS_OBJECT:
+                        go_val->value_type = 6; // object
+                        go_val->data.object_val = zval_to_go_object(val);
+                        if (!go_val->data.object_val) {
+                            // Object conversion failed
+                            free(go_val);
+                            cleanup_go_object_property(prop);
+                            cleanup_go_object(result);
+                            return NULL;
+                        }
+                        break;
+                    case IS_NULL:
+                        go_val->value_type = 5; // null
+                        break;
+                    default:
+                        go_val->value_type = 0; // default to string
+                        go_val->str_len = 0;
+                        go_val->data.str_val = (char*)malloc(1);
+                        if (!go_val->data.str_val) {
+                            free(go_val);
+                            cleanup_go_object_property(prop);
+                            cleanup_go_object(result);
+                            return NULL;
+                        }
+                        go_val->data.str_val[0] = '\0';
+                        break;
+                }
+
+                prop->value = go_val;
+                result->properties[i++] = prop;
+            } ZEND_HASH_FOREACH_END();
+        }
+    }
+
+    return result;
+}
+
+void go_object_to_zval(go_object *obj, zval *return_value) {
+    if (!obj) {
+        ZVAL_NULL(return_value);
+        return;
+    }
+
+    zend_class_entry *target_ce = NULL;
+
+    if (obj->class_name && strlen(obj->class_name) > 0) {
+        char *clean_class_name = obj->class_name;
+        while (*clean_class_name == '\\') {
+            clean_class_name++;
+        }
+
+        if (strcmp(clean_class_name, "stdClass") != 0) {
+            zend_string *class_name_str = zend_string_init(clean_class_name, strlen(clean_class_name), 0);
+            target_ce = zend_lookup_class(class_name_str);
+            zend_string_release(class_name_str);
+        }
+    }
+
+    if (target_ce) {
+        object_init_ex(return_value, target_ce);
+
+        if (obj->properties && obj->property_count > 0) {
+            for (int i = 0; i < obj->property_count; i++) {
+                go_object_property *prop = obj->properties[i];
+                if (!prop || !prop->name || !prop->value) continue;
+
+                zval tmp;
+
+                switch (prop->value->value_type) {
+                    case 0: // string
+                        ZVAL_STRINGL(&tmp, prop->value->data.str_val, prop->value->str_len);
+                        break;
+                    case 1: // int
+                        ZVAL_LONG(&tmp, prop->value->data.int_val);
+                        break;
+                    case 2: // float
+                        ZVAL_DOUBLE(&tmp, prop->value->data.float_val);
+                        break;
+                    case 3: // bool
+                        ZVAL_BOOL(&tmp, prop->value->data.bool_val);
+                        break;
+                    case 4: // array
+                        go_array_to_zval(prop->value->data.array_val, &tmp);
+                        break;
+                    case 6: // object
+                        go_object_to_zval(prop->value->data.object_val, &tmp);
+                        break;
+                    case 5: // null
+                    default:
+                        ZVAL_NULL(&tmp);
+                        break;
+                }
+
+                set_property_with_visibility(return_value, target_ce, prop->name, &tmp);
+                zval_ptr_dtor(&tmp);
+            }
+        }
+
+    } else {
+        object_init(return_value);
+
+        if (obj->class_name && strcmp(obj->class_name, "stdClass") != 0) {
+            add_property_string(return_value, "__original_class", obj->class_name);
+        }
+
+        if (obj->properties && obj->property_count > 0) {
+            for (int i = 0; i < obj->property_count; i++) {
+                go_object_property *prop = obj->properties[i];
+                if (!prop || !prop->name || !prop->value) continue;
+
+                zval tmp;
+
+                switch (prop->value->value_type) {
+                    case 0: // string
+                        ZVAL_STRINGL(&tmp, prop->value->data.str_val, prop->value->str_len);
+                        break;
+                    case 1: // int
+                        ZVAL_LONG(&tmp, prop->value->data.int_val);
+                        break;
+                    case 2: // float
+                        ZVAL_DOUBLE(&tmp, prop->value->data.float_val);
+                        break;
+                    case 3: // bool
+                        ZVAL_BOOL(&tmp, prop->value->data.bool_val);
+                        break;
+                    case 4: // array
+                        go_array_to_zval(prop->value->data.array_val, &tmp);
+                        break;
+                    case 6: // object
+                        go_object_to_zval(prop->value->data.object_val, &tmp);
+                        break;
+                    case 5: // null
+                    default:
+                        ZVAL_NULL(&tmp);
+                        break;
+                }
+
+                add_property_zval(return_value, prop->name, &tmp);
+                zval_ptr_dtor(&tmp);
+            }
+        }
+    }
+}
+
+go_nullable* create_nullable_object(zval* obj, int is_null) {
+    go_nullable* nullable = (go_nullable*)malloc(sizeof(go_nullable));
+    if (!nullable) {
+        return NULL;
+    }
+
+    nullable->is_null = is_null;
+    nullable->value_type = 6; // object type
+
+    if (is_null || obj == NULL) {
+        nullable->value = NULL;
+    } else {
+        nullable->value = zval_to_go_object(obj);
+    }
+
+    return nullable;
+}
+
+int get_property_visibility(zend_class_entry *ce, const char *property_name) {
+    if (!ce || !property_name) return 0; // default public
+
+    zend_string *prop_name = zend_string_init(property_name, strlen(property_name), 0);
+    zend_property_info *prop_info = zend_hash_find_ptr(&ce->properties_info, prop_name);
+    zend_string_release(prop_name);
+
+    if (prop_info) {
+        if (prop_info->flags & ZEND_ACC_PRIVATE) {
+            return 2; // private
+        } else if (prop_info->flags & ZEND_ACC_PROTECTED) {
+            return 1; // protected
+        } else {
+            return 0; // public
+        }
+    }
+
+    return 0; // default to public if property doesn't exist in class definition
+}
+
+void set_property_with_visibility(zval *object, zend_class_entry *ce, const char *property_name, zval *value) {
+    if (!ce) {
+        add_property_zval(object, property_name, value);
+        return;
+    }
+
+    int visibility = get_property_visibility(ce, property_name);
+
+    switch (visibility) {
+        case 0: // public
+            add_property_zval(object, property_name, value);
+            break;
+
+        case 1: // protected
+        case 2: // private
+			zend_update_property(ce, Z_OBJ_P(object), property_name, strlen(property_name), value);
+            break;
+
+        default:
+            add_property_zval(object, property_name, value);
+            break;
+    }
+}
+
+void cleanup_go_object_property(go_object_property *prop) {
+    if (prop) {
+        if (prop->name) {
+            free(prop->name);
+        }
+        if (prop->value) {
+            cleanup_go_value(prop->value);
+        }
+        free(prop);
+    }
+}
+
+void cleanup_go_object(go_object *obj) {
+    if (obj) {
+        if (obj->class_name) {
+            free(obj->class_name);
+        }
+        if (obj->properties) {
+            for (int i = 0; i < obj->property_count; i++) {
+                if (obj->properties[i]) {
+                    cleanup_go_object_property(obj->properties[i]);
+                }
+            }
+            free(obj->properties);
+        }
+        free(obj);
+    }
+}
+
+go_array* zval_to_go_array(zval *arr) {
+    if (Z_TYPE_P(arr) != IS_ARRAY) {
+        return NULL;
+    }
+
+    HashTable *ht = Z_ARRVAL_P(arr);
+    int count = zend_hash_num_elements(ht);
+
+    go_array *result = (go_array*)malloc(sizeof(go_array));
+    if (!result) {
+        return NULL;
+    }
+
+    result->length = count;
+    result->elements = NULL;
+    result->is_associative = 0;
+
+    if (count > 0) {
+        result->elements = (go_array_element**)calloc(count, sizeof(go_array_element*));
+        if (!result->elements) {
+            free(result);
+            return NULL;
+        }
+    }
+
+    zend_string *key;
+    zend_ulong num_key;
+    int expected_index = 0;
+    ZEND_HASH_FOREACH_KEY(ht, num_key, key) {
+        if (key != NULL) {
+            result->is_associative = 1;
+            break;
+        }
+        if ((int)num_key != expected_index++) {
+            result->is_associative = 1;
+            break;
+        }
+    } ZEND_HASH_FOREACH_END();
+
+    zval *val;
+    int i = 0;
+    ZEND_HASH_FOREACH_KEY_VAL(ht, num_key, key, val) {
+        go_array_element *elem = (go_array_element*)malloc(sizeof(go_array_element));
+        if (!elem) {
+            cleanup_go_array(result);
+            return NULL;
+        }
+
+        elem->key = NULL;
+        elem->index = -1;
+        elem->value = NULL;
+
+        // Set key
+        if (key != NULL) {
+            // String key
+            elem->key = (char*)malloc(ZSTR_LEN(key) + 1);
+            if (!elem->key) {
+                free(elem);
+                cleanup_go_array(result);
+                return NULL;
+            }
+            memcpy(elem->key, ZSTR_VAL(key), ZSTR_LEN(key));
+            elem->key[ZSTR_LEN(key)] = '\0';
+            elem->index = -1;
+        } else {
+            // Numeric key
+            elem->key = NULL;
+            elem->index = (int)num_key;
+        }
+
+        // Set value
+        go_value *go_val = (go_value*)malloc(sizeof(go_value));
+        if (!go_val) {
+            cleanup_go_array_element(elem);
+            cleanup_go_array(result);
+            return NULL;
+        }
+
+        switch (Z_TYPE_P(val)) {
+            case IS_STRING:
+                go_val->value_type = 0; // string
+                go_val->str_len = Z_STRLEN_P(val);
+                go_val->data.str_val = (char*)malloc(go_val->str_len + 1);
+                if (!go_val->data.str_val) {
+                    free(go_val);
+                    cleanup_go_array_element(elem);
+                    cleanup_go_array(result);
+                    return NULL;
+                }
+                memcpy(go_val->data.str_val, Z_STRVAL_P(val), go_val->str_len);
+                go_val->data.str_val[go_val->str_len] = '\0';
+                break;
+            case IS_LONG:
+                go_val->value_type = 1; // int
+                go_val->data.int_val = Z_LVAL_P(val);
+                break;
+            case IS_DOUBLE:
+                go_val->value_type = 2; // float
+                go_val->data.float_val = Z_DVAL_P(val);
+                break;
+            case IS_TRUE:
+            case IS_FALSE:
+                go_val->value_type = 3; // bool
+                go_val->data.bool_val = Z_TYPE_P(val) == IS_TRUE ? 1 : 0;
+                break;
+            case IS_ARRAY:
+                go_val->value_type = 4; // array
+                go_val->data.array_val = zval_to_go_array(val);
+                if (!go_val->data.array_val && zend_hash_num_elements(Z_ARRVAL_P(val)) > 0) {
+                    // Array conversion failed
+                    free(go_val);
+                    cleanup_go_array_element(elem);
+                    cleanup_go_array(result);
+                    return NULL;
+                }
+                break;
+            case IS_NULL:
+                go_val->value_type = 5; // null
+                break;
+            default:
+                go_val->value_type = 0; // default to string
+                go_val->str_len = 0;
+                go_val->data.str_val = (char*)malloc(1);
+                if (!go_val->data.str_val) {
+                    free(go_val);
+                    cleanup_go_array_element(elem);
+                    cleanup_go_array(result);
+                    return NULL;
+                }
+                go_val->data.str_val[0] = '\0';
+                break;
+        }
+
+        elem->value = go_val;
+        result->elements[i++] = elem;
+    } ZEND_HASH_FOREACH_END();
+
+    return result;
+}
+
+void go_array_to_zval(go_array *arr, zval *return_value) {
+    array_init(return_value);
+
+    if (!arr || arr->length == 0) {
+        return;
+    }
+
+    for (int i = 0; i < arr->length; i++) {
+        go_array_element *elem = arr->elements[i];
+        if (!elem || !elem->value) continue;
+
+        zval tmp;
+
+        switch (elem->value->value_type) {
+            case 0: // string
+                ZVAL_STRINGL(&tmp, elem->value->data.str_val, elem->value->str_len);
+                break;
+            case 1: // int
+                ZVAL_LONG(&tmp, elem->value->data.int_val);
+                break;
+            case 2: // float
+                ZVAL_DOUBLE(&tmp, elem->value->data.float_val);
+                break;
+            case 3: // bool
+                ZVAL_BOOL(&tmp, elem->value->data.bool_val);
+                break;
+            case 4: // array
+                go_array_to_zval(elem->value->data.array_val, &tmp);
+                break;
+            case 5: // null
+				// no break
+            default:
+                ZVAL_NULL(&tmp);
+                break;
+        }
+
+        // Add to array with appropriate key
+        if (elem->key != NULL) {
+            // String key
+            add_assoc_zval(return_value, elem->key, &tmp);
+        } else {
+            // Numeric key
+            add_index_zval(return_value, elem->index, &tmp);
+        }
+    }
+}
+
+go_nullable* create_nullable_string(char* str, size_t len, int is_null) {
+	go_nullable* nullable = (go_nullable*)malloc(sizeof(go_nullable));
+	if (!nullable) {
+	    return NULL;
+	}
+
+	nullable->is_null = is_null;
+	nullable->value_type = 0; // string type
+
+	if (is_null || str == NULL) {
+		nullable->value = NULL;
+	} else {
+		go_string* go_str = (go_string*)malloc(sizeof(go_string));
+		if (!go_str) {
+		    free(nullable);
+		    return NULL;
+		}
+		go_str->length = (int)len;
+		go_str->data = (char*)malloc(len + 1);
+		if (!go_str->data) {
+		    free(go_str);
+		    free(nullable);
+		    return NULL;
+		}
+		if (len > 0) {
+		    memcpy(go_str->data, str, len);
+		}
+		go_str->data[len] = '\0';
+		nullable->value = go_str;
+	}
+
+	return nullable;
+}
+
+go_nullable* create_nullable_long(long val, int is_null) {
+	go_nullable* nullable = (go_nullable*)malloc(sizeof(go_nullable));
+	if (!nullable) {
+	    return NULL;
+	}
+
+	nullable->is_null = is_null;
+	nullable->value_type = 1; // int type
+
+	if (is_null) {
+		nullable->value = NULL;
+	} else {
+		long* long_ptr = (long*)malloc(sizeof(long));
+		if (!long_ptr) {
+		    free(nullable);
+		    return NULL;
+		}
+		*long_ptr = val;
+		nullable->value = long_ptr;
+	}
+
+	return nullable;
+}
+
+go_nullable* create_nullable_double(double val, int is_null) {
+	go_nullable* nullable = (go_nullable*)malloc(sizeof(go_nullable));
+	if (!nullable) {
+	    return NULL;
+	}
+
+	nullable->is_null = is_null;
+	nullable->value_type = 2; // float type
+
+	if (is_null) {
+		nullable->value = NULL;
+	} else {
+		double* double_ptr = (double*)malloc(sizeof(double));
+		if (!double_ptr) {
+		    free(nullable);
+		    return NULL;
+		}
+		*double_ptr = val;
+		nullable->value = double_ptr;
+	}
+
+	return nullable;
+}
+
+go_nullable* create_nullable_bool(int val, int is_null) {
+	go_nullable* nullable = (go_nullable*)malloc(sizeof(go_nullable));
+	if (!nullable) {
+	    return NULL;
+	}
+
+	nullable->is_null = is_null;
+	nullable->value_type = 3; // bool type
+
+	if (is_null) {
+		nullable->value = NULL;
+	} else {
+		int* int_ptr = (int*)malloc(sizeof(int));
+		if (!int_ptr) {
+		    free(nullable);
+		    return NULL;
+		}
+		*int_ptr = val;
+		nullable->value = int_ptr;
+	}
+
+	return nullable;
+}
+
+go_nullable* create_nullable_array(zval* arr, int is_null) {
+	go_nullable* nullable = (go_nullable*)malloc(sizeof(go_nullable));
+	if (!nullable) {
+	    return NULL;
+	}
+
+	nullable->is_null = is_null;
+	nullable->value_type = 4; // array type
+
+	if (is_null || arr == NULL) {
+		nullable->value = NULL;
+	} else {
+		nullable->value = zval_to_go_array(arr);
+	}
+
+	return nullable;
+}
+
+void cleanup_go_nullable(go_nullable* nullable) {
+    if (nullable) {
+        if (nullable->value) {
+            switch (nullable->value_type) {
+            case 0: // string
+                if (nullable->value) {
+                    go_string* str = (go_string*)nullable->value;
+                    if (str->data) {
+                        free(str->data);
+                    }
+                    free(str);
+                }
+                break;
+            case 1: // int
+            case 2: // float
+            case 3: // bool
+                free(nullable->value);
+                break;
+            case 4: // array
+                if (nullable->value) {
+                    cleanup_go_array((go_array*)nullable->value);
+                }
+                break;
+            case 6: // object
+                if (nullable->value) {
+                    cleanup_go_object((go_object*)nullable->value);
+                }
+                break;
+            }
+        }
+        free(nullable);
+    }
+}
+
+void cleanup_go_value(go_value *v) {
+    if (v) {
+        if (v->value_type == 0 && v->data.str_val) { // string type
+            free(v->data.str_val);
+        } else if (v->value_type == 4 && v->data.array_val) { // array type
+            cleanup_go_array(v->data.array_val);
+        } else if (v->value_type == 6 && v->data.object_val) { // object type
+            cleanup_go_object(v->data.object_val);
+        }
+        free(v);
+    }
+}
+
+void cleanup_go_array_element(go_array_element *elem) {
+    if (elem) {
+        if (elem->key) {
+            free(elem->key);
+        }
+        if (elem->value) {
+            cleanup_go_value(elem->value);
+        }
+        free(elem);
+    }
+}
+
+void cleanup_go_array(go_array *arr) {
+    if (arr) {
+        if (arr->elements) {
+            for (int i = 0; i < arr->length; i++) {
+                if (arr->elements[i]) {
+                    cleanup_go_array_element(arr->elements[i]);
+                }
+            }
+            free(arr->elements);
+        }
+        free(arr);
+    }
+}
+
+PHP_MINIT_FUNCTION(%s) {
+  register_all_classes();
+
+  return SUCCESS;
+}
+
+zend_module_entry %s_module_entry = {STANDARD_MODULE_HEADER,
+                                         "%s",
+                                         ext_functions,  /* Functions */
+                                         PHP_MINIT(%s),  /* MINIT */
+                                         NULL,           /* MSHUTDOWN */
+                                         NULL,           /* RINIT */
+                                         NULL,           /* RSHUTDOWN */
+                                         NULL,           /* MINFO */
+                                         "1.0.0",
+                                         STANDARD_MODULE_PROPERTIES};
+
+PHPAPI int register_internal_extensions(void) {
+  if (original_php_register_internal_extensions_func != NULL &&
+      original_php_register_internal_extensions_func() != SUCCESS) {
+    return FAILURE;
+  }
+
+  zend_module_entry *module = &%s_module_entry;
+  if (zend_register_internal_module(module) == NULL) {
+    return FAILURE;
+  };
+
+  return SUCCESS;
+}
+
+void register_extension() {
+  original_php_register_internal_extensions_func =
+      php_register_internal_extensions_func;
+  php_register_internal_extensions_func = register_internal_extensions;
+}

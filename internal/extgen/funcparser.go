@@ -8,8 +8,18 @@ import (
 	"strings"
 )
 
+var phpFuncRegex = regexp.MustCompile(`//\s*export_php:?\s*(?:function\s+)?([^{}\n]+)(?:\s*\{\s*\})?`)
+var signatureRegex = regexp.MustCompile(`(\w+)\s*\(([^)]*)\)\s*:\s*(\??[\w|]+)`)
+var typeNameRegex = regexp.MustCompile(`(\??[\w|]+)\s+\$?(\w+)`)
+
 type FuncParser struct {
 	phpFuncRegex *regexp.Regexp
+}
+
+func NewFuncParserDefRegex() *FuncParser {
+	return &FuncParser{
+		phpFuncRegex: phpFuncRegex,
+	}
 }
 
 func (fp *FuncParser) parse(filename string) ([]PHPFunction, error) {
@@ -84,7 +94,6 @@ func (fp *FuncParser) extractGoFunction(scanner *bufio.Scanner, firstLine string
 }
 
 func (fp *FuncParser) parseSignature(signature string) (*PHPFunction, error) {
-	signatureRegex := regexp.MustCompile(`(\w+)\s*\(([^)]*)\)\s*:\s*(\??[\w|]+)`)
 	matches := signatureRegex.FindStringSubmatch(signature)
 
 	if len(matches) != 4 {
@@ -129,7 +138,6 @@ func (fp *FuncParser) parseParameter(paramStr string) (Parameter, error) {
 		param.DefaultValue = fp.sanitizeDefaultValue(strings.TrimSpace(parts[1]))
 	}
 
-	typeNameRegex := regexp.MustCompile(`(\??[\w|]+)\s+\$?(\w+)`)
 	matches := typeNameRegex.FindStringSubmatch(typePart)
 
 	if len(matches) < 3 {

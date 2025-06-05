@@ -15,7 +15,11 @@ type ArginfoGenerator struct {
 func (ag *ArginfoGenerator) Generate() error {
 	genStubPath := os.Getenv("GEN_STUB_SCRIPT")
 	if genStubPath == "" {
-		return fmt.Errorf("GEN_STUB_SCRIPT environment variable is not set")
+		genStubPath = "/usr/local/src/php/build/gen_stub.php"
+	}
+
+	if _, err := os.Stat(genStubPath); err != nil {
+		return fmt.Errorf(`the PHP "gen_stub.php" file couldn't be found under %q, you can set the "GEN_STUB_SCRIPT" environement variable to set a custom location`, genStubPath)
 	}
 
 	stubFile := ag.generator.BaseName + ".stub.php"

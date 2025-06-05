@@ -47,7 +47,7 @@ func anotherHelper() {
 	}
 
 	generator := &Generator{
-		BaseName:   "test_ext",
+		BaseName:   "test",
 		SourceFile: sourceFile,
 		BuildDir:   tmpDir,
 		Functions: []PHPFunction{
@@ -75,7 +75,7 @@ func anotherHelper() {
 		t.Fatalf("generate() failed: %v", err)
 	}
 
-	expectedFile := filepath.Join(tmpDir, "test_ext_ext.go")
+	expectedFile := filepath.Join(tmpDir, "testext.go")
 	if _, err := os.Stat(expectedFile); os.IsNotExist(err) {
 		t.Errorf("Expected Go file was not created: %s", expectedFile)
 	}
@@ -85,7 +85,7 @@ func anotherHelper() {
 		t.Fatalf("Failed to read generated Go file: %v", err)
 	}
 
-	testGoFileBasicStructure(t, content, "test_ext")
+	testGoFileBasicStructure(t, content, "test")
 	testGoFileImports(t, content)
 	testGoFileExportedFunctions(t, content, generator.Functions)
 	testGoFileInternalFunctions(t, content)
@@ -159,9 +159,6 @@ func process(data *go_string) *go_value {
 				"//export process",
 				`import "C"`,
 			},
-			notContains: []string{
-				"github.com/dunglas/frankenphp/internal/extensions/types",
-			},
 		},
 		{
 			name:     "extension with internal functions",
@@ -212,12 +209,6 @@ func internalFunc2(data string) {
 			for _, expected := range tt.contains {
 				if !strings.Contains(content, expected) {
 					t.Errorf("Generated Go content should contain '%s'\nGenerated:\n%s", expected, content)
-				}
-			}
-
-			for _, notExpected := range tt.notContains {
-				if strings.Contains(content, notExpected) {
-					t.Errorf("Generated Go content should NOT contain '%s'\nGenerated:\n%s", notExpected, content)
 				}
 			}
 		})
@@ -357,7 +348,6 @@ func test() {}`
 
 	forbiddenImports := []string{
 		`import "C"`,
-		`"github.com/dunglas/frankenphp/internal/extensions/types"`,
 	}
 
 	cImportCount := strings.Count(content, `import "C"`)
@@ -519,10 +509,6 @@ func testGoFileImports(t *testing.T, content string) {
 	cImportCount := strings.Count(content, `import "C"`)
 	if cImportCount != 1 {
 		t.Errorf("Expected exactly 1 C import, got %d", cImportCount)
-	}
-
-	if strings.Contains(content, "github.com/dunglas/frankenphp/internal/extensions/types") {
-		t.Error("Generated Go file should not contain types package import")
 	}
 }
 

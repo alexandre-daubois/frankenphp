@@ -89,7 +89,7 @@ func phpFunc(data *go_string) *go_value {
 			}
 			tmpfile.Close()
 
-			parser := FuncParser{}
+			parser := NewFuncParserDefRegex()
 			functions, err := parser.parse(tmpfile.Name())
 			if err != nil {
 				t.Fatalf("parse() error = %v", err)
@@ -180,7 +180,7 @@ func TestSignatureParsing(t *testing.T) {
 		},
 	}
 
-	parser := FuncParser{}
+	parser := NewFuncParserDefRegex()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fn, err := parser.parseSignature(tt.signature)
@@ -282,7 +282,7 @@ func TestParameterParsing(t *testing.T) {
 		},
 	}
 
-	parser := FuncParser{}
+	parser := NewFuncParserDefRegex()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			param, err := parser.parseParameter(tt.paramStr)

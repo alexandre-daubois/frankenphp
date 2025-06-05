@@ -11,7 +11,7 @@ type GoFileGenerator struct {
 }
 
 func (gg *GoFileGenerator) generate() error {
-	filename := filepath.Join(gg.generator.BuildDir, gg.generator.BaseName+"_ext.go")
+	filename := filepath.Join(gg.generator.BuildDir, gg.generator.BaseName+"ext.go")
 	content, err := gg.buildContent()
 	if err != nil {
 		return fmt.Errorf("building Go file content: %w", err)
@@ -21,7 +21,7 @@ func (gg *GoFileGenerator) generate() error {
 
 func (gg *GoFileGenerator) buildContent() (string, error) {
 	sourceAnalyzer := SourceAnalyzer{}
-	packageName, imports, internalFunctions, err := sourceAnalyzer.Analyze(gg.generator.SourceFile)
+	imports, internalFunctions, err := sourceAnalyzer.Analyze(gg.generator.SourceFile)
 	if err != nil {
 		return "", fmt.Errorf("analyzing source file: %w", err)
 	}
@@ -29,19 +29,24 @@ func (gg *GoFileGenerator) buildContent() (string, error) {
 	var builder strings.Builder
 
 	cleanPackageName := SanitizePackageName(gg.generator.BaseName)
-	builder.WriteString(fmt.Sprintf("package %s\n\n", cleanPackageName))
-	builder.WriteString(fmt.Sprintf("/*\n#include <stdlib.h>\n#include \"%s.h\"\n*/\nimport \"C\"\n", gg.generator.BaseName))
+	builder.WriteString(fmt.Sprintf(`package %s
+
+/*
+#include <stdlib.h>
+#include "%s.h"
+*/
+import "C"
+`, cleanPackageName, gg.generator.BaseName))
 
 	for _, imp := range imports {
-		if !strings.Contains(imp, `"C"`) && !strings.Contains(imp, "github.com/dunglas/frankenphp/internal/extensions/types") {
-			if strings.Contains(imp, packageName) {
-				imp = strings.ReplaceAll(imp, packageName, "types")
-			}
-			builder.WriteString(fmt.Sprintf("import %s\n", imp))
+		if imp == `"C"` {
+			continue
 		}
+
+		builder.WriteString(fmt.Sprintf("import %s\n", imp))
 	}
 
-	builder.WriteString("\nfunc init() {\n\tC.register_extension()\n}\n\n")
+	builder.WriteString("\nfunc init() {\n\tC.register_extension()\n}\n\n") // TODO update with the new frankenphp func!
 
 	for _, internalFunc := range internalFunctions {
 		builder.WriteString(internalFunc + "\n\n")

@@ -4,7 +4,7 @@ type SourceParser struct{}
 
 // EXPERIMENTAL
 func (p *SourceParser) ParseFunctions(filename string) ([]PHPFunction, error) {
-	functionParser := FuncParser{}
+	functionParser := NewFuncParserDefRegex()
 	return functionParser.parse(filename)
 }
 

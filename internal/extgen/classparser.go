@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+var phpClassRegex = regexp.MustCompile(`//\s*php_class:\s*(\w+)`)
+
 type ClassParser struct{}
 
 func (cp *ClassParser) parse(filename string) ([]PHPClass, error) {
@@ -21,29 +23,42 @@ func (cp *ClassParser) parse(filename string) ([]PHPClass, error) {
 	var classes []PHPClass
 	validator := NewValidator()
 
+	var genDecl *ast.GenDecl
+	var ok bool
 	for _, decl := range node.Decls {
-		if genDecl, ok := decl.(*ast.GenDecl); ok && genDecl.Tok == token.TYPE {
-			for _, spec := range genDecl.Specs {
-				if typeSpec, ok := spec.(*ast.TypeSpec); ok {
-					if structType, ok := typeSpec.Type.(*ast.StructType); ok {
-						if phpClass := cp.extractPHPClassComment(genDecl.Doc); phpClass != "" {
-							class := PHPClass{
-								Name:     phpClass,
-								GoStruct: typeSpec.Name.Name,
-							}
+		if genDecl, ok = decl.(*ast.GenDecl); !ok || genDecl.Tok != token.TYPE {
+			continue
+		}
 
-							class.Properties = cp.parseStructFields(structType.Fields.List)
-
-							if err := validator.ValidateClass(class); err != nil {
-								fmt.Printf("Warning: Invalid class '%s': %v\n", class.Name, err)
-								continue
-							}
-
-							classes = append(classes, class)
-						}
-					}
-				}
+		for _, spec := range genDecl.Specs {
+			var typeSpec *ast.TypeSpec
+			if typeSpec, ok = spec.(*ast.TypeSpec); !ok {
+				continue
 			}
+
+			var structType *ast.StructType
+			if structType, ok = typeSpec.Type.(*ast.StructType); !ok {
+				continue
+			}
+
+			var phpClass string
+			if phpClass = cp.extractPHPClassComment(genDecl.Doc); phpClass == "" {
+				continue
+			}
+
+			class := PHPClass{
+				Name:     phpClass,
+				GoStruct: typeSpec.Name.Name,
+			}
+
+			class.Properties = cp.parseStructFields(structType.Fields.List)
+
+			if err := validator.ValidateClass(class); err != nil {
+				fmt.Printf("Warning: Invalid class '%s': %v\n", class.Name, err)
+				continue
+			}
+
+			classes = append(classes, class)
 		}
 	}
 
@@ -54,8 +69,6 @@ func (cp *ClassParser) extractPHPClassComment(commentGroup *ast.CommentGroup) st
 	if commentGroup == nil {
 		return ""
 	}
-
-	phpClassRegex := regexp.MustCompile(`//\s*php_class:\s*(\w+)`)
 
 	for _, comment := range commentGroup.List {
 		if matches := phpClassRegex.FindStringSubmatch(comment.Text); matches != nil {

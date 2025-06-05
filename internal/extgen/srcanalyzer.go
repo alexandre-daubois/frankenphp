@@ -10,15 +10,11 @@ import (
 
 type SourceAnalyzer struct{}
 
-func (sa *SourceAnalyzer) Analyze(filename string) (packageName string, imports []string, internalFunctions []string, err error) {
+func (sa *SourceAnalyzer) Analyze(filename string) (imports []string, internalFunctions []string, err error) {
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, filename, nil, parser.ParseComments)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("parsing file: %w", err)
-	}
-
-	if node.Name != nil {
-		packageName = node.Name.Name
+		return nil, nil, fmt.Errorf("parsing file: %w", err)
 	}
 
 	for _, imp := range node.Imports {
@@ -34,12 +30,12 @@ func (sa *SourceAnalyzer) Analyze(filename string) (packageName string, imports 
 
 	sourceContent, err := os.ReadFile(filename)
 	if err != nil {
-		return "", nil, nil, fmt.Errorf("reading source file: %w", err)
+		return nil, nil, fmt.Errorf("reading source file: %w", err)
 	}
 
 	internalFunctions = sa.extractInternalFunctions(string(sourceContent))
 
-	return packageName, imports, internalFunctions, nil
+	return imports, internalFunctions, nil
 }
 
 func (sa *SourceAnalyzer) extractInternalFunctions(content string) []string {
@@ -65,7 +61,7 @@ func (sa *SourceAnalyzer) extractInternalFunctions(content string) []string {
 				if prevLine == "" {
 					continue
 				}
-				if strings.Contains(prevLine, "export_php:") {
+				if strings.Contains(prevLine, "export_php") {
 					hasPHPFunc = true
 					break
 				}

@@ -5,6 +5,9 @@ import (
 	"regexp"
 )
 
+var functionNameRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+var parameterNameRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
 type Validator struct{}
 
 func NewValidator() *Validator {
@@ -16,7 +19,7 @@ func (v *Validator) ValidateFunction(fn PHPFunction) error {
 		return fmt.Errorf("function name cannot be empty")
 	}
 
-	if !regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`).MatchString(fn.Name) {
+	if !functionNameRegex.MatchString(fn.Name) {
 		return fmt.Errorf("invalid function name: %s", fn.Name)
 	}
 
@@ -38,7 +41,7 @@ func (v *Validator) ValidateParameter(param Parameter) error {
 		return fmt.Errorf("parameter name cannot be empty")
 	}
 
-	if !regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`).MatchString(param.Name) {
+	if !parameterNameRegex.MatchString(param.Name) {
 		return fmt.Errorf("invalid parameter name: %s", param.Name)
 	}
 

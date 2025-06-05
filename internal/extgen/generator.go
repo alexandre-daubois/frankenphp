@@ -37,7 +37,6 @@ func (g *Generator) Generate() error {
 		{"header file", g.generateHeaderFile},
 		{"C file", g.generateCFile},
 		{"Go file", g.generateGoFile},
-		{"type files", g.copyTypeFiles},
 		{"documentation", g.generateDocumentation},
 	}
 
@@ -111,14 +110,6 @@ func (g *Generator) generateGoFile() error {
 	generator := GoFileGenerator{g}
 	if err := generator.generate(); err != nil {
 		return &GeneratorError{"Go file generation", "failed to generate Go file", err}
-	}
-	return nil
-}
-
-func (g *Generator) copyTypeFiles() error {
-	copier := newTypeCopier(g)
-	if err := copier.copy(); err != nil {
-		return &GeneratorError{"type files copying", "failed to copy type files", err}
 	}
 	return nil
 }

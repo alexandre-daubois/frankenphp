@@ -95,7 +95,10 @@ func (pfg *PHPFuncGenerator) getDefaultValue(param Parameter, fallback string) s
 
 func (pfg *PHPFuncGenerator) generateParamParsing(params []Parameter, requiredCount int) string {
 	if len(params) == 0 {
-		return "    if (zend_parse_parameters_none() == FAILURE) {\n        RETURN_THROWS();\n    }"
+		return `
+	if (zend_parse_parameters_none() == FAILURE) {
+		RETURN_THROWS();
+	}`
 	}
 
 	var builder strings.Builder
@@ -189,10 +192,9 @@ func (pfg *PHPFuncGenerator) getCReturnType(returnType string) string {
 
 func (pfg *PHPFuncGenerator) generateReturnCode(returnType string) string {
 	switch returnType {
-	case "void":
-		return ""
 	case "string":
-		return `    if (result) {
+		return `
+	if (result) {
         RETURN_STR(result);
     } else {
         RETURN_EMPTY_STRING();

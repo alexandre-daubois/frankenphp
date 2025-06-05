@@ -36,7 +36,6 @@ func TestHeaderGenerator_Generate(t *testing.T) {
 	}
 
 	testHeaderBasicStructure(t, content, "test_extension")
-	testHeaderFunctionDeclarations(t, content)
 	testHeaderIncludeGuards(t, content, "TEST_EXTENSION_H")
 }
 
@@ -52,10 +51,14 @@ func TestHeaderGenerator_BuildContent(t *testing.T) {
 			contains: []string{
 				"#ifndef _SIMPLE_H",
 				"#define _SIMPLE_H",
-				"#include <Zend/zend_types.h>",
-				`#include "types.h"`,
+				"#include <php.h>",
 				"void register_extension();",
-				"void cleanup_go_value(go_value*);",
+				"extern zend_module_entry ext_module_entry;",
+				"typedef struct go_value go_value;",
+				"typedef struct go_string {",
+				"size_t len;",
+				"char *data;",
+				"} go_string;",
 				"#endif",
 			},
 		},
@@ -95,26 +98,15 @@ func TestHeaderGenerator_BuildContent(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			generator := &Generator{BaseName: tt.baseName}
 			headerGen := HeaderGenerator{generator}
-			content := headerGen.buildContent()
+			content, err := headerGen.buildContent()
+			if err != nil {
+				t.Fatalf("buildContent() failed: %v", err)
+			}
 
 			for _, expected := range tt.contains {
 				if !strings.Contains(content, expected) {
 					t.Errorf("Generated header content should contain '%s'\nGenerated:\n%s", expected, content)
 				}
-			}
-
-			headerGuard := strings.ToUpper(strings.ReplaceAll(tt.baseName, "-", "_"))
-			headerGuard = strings.ReplaceAll(headerGuard, ".", "_") + "_H"
-
-			expectedIfndef := "#ifndef _" + headerGuard
-			expectedDefine := "#define _" + headerGuard
-
-			if !strings.Contains(content, expectedIfndef) {
-				t.Errorf("Header should contain proper #ifndef guard: %s", expectedIfndef)
-			}
-
-			if !strings.Contains(content, expectedDefine) {
-				t.Errorf("Header should contain proper #define guard: %s", expectedDefine)
 			}
 		})
 	}
@@ -138,7 +130,10 @@ func TestHeaderGenerator_HeaderGuardGeneration(t *testing.T) {
 		t.Run(tt.baseName, func(t *testing.T) {
 			generator := &Generator{BaseName: tt.baseName}
 			headerGen := HeaderGenerator{generator}
-			content := headerGen.buildContent()
+			content, err := headerGen.buildContent()
+			if err != nil {
+				t.Fatalf("buildContent() failed: %v", err)
+			}
 
 			expectedIfndef := "#ifndef " + tt.expectedGuard
 			expectedDefine := "#define " + tt.expectedGuard
@@ -154,54 +149,28 @@ func TestHeaderGenerator_HeaderGuardGeneration(t *testing.T) {
 	}
 }
 
-func TestHeaderGenerator_FunctionDeclarations(t *testing.T) {
-	generator := &Generator{BaseName: "functest"}
+func TestHeaderGenerator_BasicStructure(t *testing.T) {
+	generator := &Generator{BaseName: "structtest"}
 	headerGen := HeaderGenerator{generator}
-	content := headerGen.buildContent()
+	content, err := headerGen.buildContent()
+	if err != nil {
+		t.Fatalf("buildContent() failed: %v", err)
+	}
 
-	expectedDeclarations := []string{
+	expectedElements := []string{
+		"#include <php.h>",
 		"void register_extension();",
-		"void cleanup_go_value(go_value*);",
-		"void cleanup_go_array(go_array*);",
-		"void cleanup_go_object(go_object*);",
-		"void cleanup_go_nullable(go_nullable*);",
-		"void cleanup_go_object_property(go_object_property*);",
-		"void cleanup_go_array_element(go_array_element *);",
-		"go_array* zval_to_go_array(zval *arr);",
-		"go_object* zval_to_go_object(zval *obj);",
-		"void go_array_to_zval(go_array *arr, zval *return_value);",
-		"void go_object_to_zval(go_object *obj, zval *return_value);",
-		"void register_all_classes();",
-		"int get_property_visibility(zend_class_entry *ce, const char *property_name);",
-		"void set_property_with_visibility(zval *object, zend_class_entry *ce, const char *property_name, zval *value);",
-		"go_nullable* create_nullable_string(char* str, size_t len, int is_null);",
-		"go_nullable* create_nullable_long(long val, int is_null);",
-		"go_nullable* create_nullable_double(double val, int is_null);",
-		"go_nullable* create_nullable_bool(int val, int is_null);",
-		"go_nullable* create_nullable_array(zval* arr, int is_null);",
-		"go_nullable* create_nullable_object(zval* obj, int is_null);",
+		"extern zend_module_entry ext_module_entry;",
+		"typedef struct go_value go_value;",
+		"typedef struct go_string {",
+		"size_t len;",
+		"char *data;",
+		"} go_string;",
 	}
 
-	for _, decl := range expectedDeclarations {
-		if !strings.Contains(content, decl) {
-			t.Errorf("Header should contain function declaration: %s", decl)
-		}
-	}
-}
-
-func TestHeaderGenerator_IncludeStatements(t *testing.T) {
-	generator := &Generator{BaseName: "includetest"}
-	headerGen := HeaderGenerator{generator}
-	content := headerGen.buildContent()
-
-	expectedIncludes := []string{
-		"#include <Zend/zend_types.h>",
-		`#include "types.h"`,
-	}
-
-	for _, include := range expectedIncludes {
-		if !strings.Contains(content, include) {
-			t.Errorf("Header should contain include: %s", include)
+	for _, element := range expectedElements {
+		if !strings.Contains(content, element) {
+			t.Errorf("Header should contain: %s", element)
 		}
 	}
 }
@@ -209,7 +178,10 @@ func TestHeaderGenerator_IncludeStatements(t *testing.T) {
 func TestHeaderGenerator_CompleteStructure(t *testing.T) {
 	generator := &Generator{BaseName: "complete_test"}
 	headerGen := HeaderGenerator{generator}
-	content := headerGen.buildContent()
+	content, err := headerGen.buildContent()
+	if err != nil {
+		t.Fatalf("buildContent() failed: %v", err)
+	}
 
 	lines := strings.Split(content, "\n")
 
@@ -217,9 +189,7 @@ func TestHeaderGenerator_CompleteStructure(t *testing.T) {
 		t.Error("Header file should have multiple lines")
 	}
 
-	foundIfndef := false
-	foundDefine := false
-	foundEndif := false
+	var foundIfndef, foundDefine, foundEndif bool
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -265,21 +235,27 @@ func TestHeaderGenerator_ErrorHandling(t *testing.T) {
 func TestHeaderGenerator_EmptyBaseName(t *testing.T) {
 	generator := &Generator{BaseName: ""}
 	headerGen := HeaderGenerator{generator}
-	content := headerGen.buildContent()
+	content, err := headerGen.buildContent()
+	if err != nil {
+		t.Fatalf("buildContent() failed: %v", err)
+	}
 
 	if !strings.Contains(content, "#ifndef __H") {
-		t.Error("Header with empty basename should have __H guard, got " + content)
+		t.Error("Header with empty basename should have __H guard")
 	}
 
 	if !strings.Contains(content, "#define __H") {
-		t.Error("Header with empty basename should have _H define")
+		t.Error("Header with empty basename should have __H define")
 	}
 }
 
 func TestHeaderGenerator_ContentValidation(t *testing.T) {
 	generator := &Generator{BaseName: "validation_test"}
 	headerGen := HeaderGenerator{generator}
-	content := headerGen.buildContent()
+	content, err := headerGen.buildContent()
+	if err != nil {
+		t.Fatalf("buildContent() failed: %v", err)
+	}
 
 	if strings.Count(content, "#ifndef") != 1 {
 		t.Error("Header should have exactly one #ifndef")
@@ -293,24 +269,20 @@ func TestHeaderGenerator_ContentValidation(t *testing.T) {
 		t.Error("Header should have exactly one #endif")
 	}
 
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if strings.Contains(line, "(") && strings.Contains(line, ")") && !strings.HasPrefix(line, "#") {
-			if !strings.HasSuffix(line, ";") {
-				t.Errorf("Function declaration should end with semicolon: %s", line)
-			}
-		}
+	if strings.Contains(content, "{{") || strings.Contains(content, "}}") {
+		t.Error("Generated header contains unresolved template syntax")
 	}
 
-	for _, line := range lines {
-		if strings.Contains(line, "void ") || strings.Contains(line, "go_") {
-			openParens := strings.Count(line, "(")
-			closeParens := strings.Count(line, ")")
-			if openParens != closeParens {
-				t.Errorf("Unbalanced parentheses in line: %s", line)
-			}
-		}
+	if !strings.Contains(content, "typedef struct go_string {") {
+		t.Error("Header should contain go_string typedef")
+	}
+
+	if !strings.Contains(content, "size_t len;") {
+		t.Error("Header should contain len field in go_string")
+	}
+
+	if !strings.Contains(content, "char *data;") {
+		t.Error("Header should contain data field in go_string")
 	}
 }
 
@@ -332,7 +304,10 @@ func TestHeaderGenerator_SpecialCharacterHandling(t *testing.T) {
 		t.Run(tt.input, func(t *testing.T) {
 			generator := &Generator{BaseName: tt.input}
 			headerGen := HeaderGenerator{generator}
-			content := headerGen.buildContent()
+			content, err := headerGen.buildContent()
+			if err != nil {
+				t.Fatalf("buildContent() failed: %v", err)
+			}
 
 			expectedGuard := "_" + tt.expected + "_H"
 			expectedIfndef := "#ifndef " + expectedGuard
@@ -349,40 +324,87 @@ func TestHeaderGenerator_SpecialCharacterHandling(t *testing.T) {
 	}
 }
 
+func TestHeaderGenerator_TemplateErrorHandling(t *testing.T) {
+	generator := &Generator{BaseName: "error_test"}
+	headerGen := HeaderGenerator{generator}
+
+	_, err := headerGen.buildContent()
+	if err != nil {
+		t.Errorf("buildContent() should not fail with valid template: %v", err)
+	}
+}
+
+func TestHeaderGenerator_GuardConsistency(t *testing.T) {
+	baseName := "test_consistency"
+	generator := &Generator{BaseName: baseName}
+	headerGen := HeaderGenerator{generator}
+
+	content1, err := headerGen.buildContent()
+	if err != nil {
+		t.Fatalf("First buildContent() failed: %v", err)
+	}
+
+	content2, err := headerGen.buildContent()
+	if err != nil {
+		t.Fatalf("Second buildContent() failed: %v", err)
+	}
+
+	if content1 != content2 {
+		t.Error("Multiple calls to buildContent() should produce identical results")
+	}
+}
+
+func TestHeaderGenerator_MinimalContent(t *testing.T) {
+	generator := &Generator{BaseName: "minimal"}
+	headerGen := HeaderGenerator{generator}
+	content, err := headerGen.buildContent()
+	if err != nil {
+		t.Fatalf("buildContent() failed: %v", err)
+	}
+
+	essentialElements := []string{
+		"#ifndef _MINIMAL_H",
+		"#define _MINIMAL_H",
+		"#include <php.h>",
+		"void register_extension();",
+		"extern zend_module_entry ext_module_entry;",
+		"typedef struct go_value go_value;",
+		"#endif",
+	}
+
+	for _, element := range essentialElements {
+		if !strings.Contains(content, element) {
+			t.Errorf("Minimal header should contain: %s", element)
+		}
+	}
+}
+
 func testHeaderBasicStructure(t *testing.T, content, baseName string) {
-	headerGuard := strings.ToUpper(strings.ReplaceAll(baseName, "-", "_")) + "_H"
+	headerGuard := strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			return r
+		}
+		return '_'
+	}, baseName)
+	headerGuard = strings.ToUpper(headerGuard) + "_H"
 
 	requiredElements := []string{
 		"#ifndef _" + headerGuard,
 		"#define _" + headerGuard,
-		"#include <Zend/zend_types.h>",
-		"#include \"types.h\"",
+		"#include <php.h>",
+		"void register_extension();",
+		"extern zend_module_entry ext_module_entry;",
+		"typedef struct go_value go_value;",
+		"typedef struct go_string {",
+		"size_t len;",
+		"char *data;",
+		"} go_string;",
 		"#endif",
 	}
 
 	for _, element := range requiredElements {
 		if !strings.Contains(content, element) {
 			t.Errorf("Header file should contain: %s", element)
-		}
-	}
-}
-
-func testHeaderFunctionDeclarations(t *testing.T, content string) {
-	essentialFunctions := []string{
-		"register_extension",
-		"cleanup_go_value",
-		"cleanup_go_array",
-		"cleanup_go_object",
-		"register_all_classes",
-		"create_nullable_string",
-		"create_nullable_long",
-		"zval_to_go_array",
-		"go_array_to_zval",
-	}
-
-	for _, fn := range essentialFunctions {
-		if !strings.Contains(content, fn) {
-			t.Errorf("Header should contain declaration for: %s", fn)
 		}
 	}
 }

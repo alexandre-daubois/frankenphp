@@ -70,11 +70,12 @@ func TestCFileGenerator_Generate(t *testing.T) {
 
 func TestCFileGenerator_BuildContent(t *testing.T) {
 	tests := []struct {
-		name      string
-		baseName  string
-		functions []PHPFunction
-		classes   []PHPClass
-		contains  []string
+		name        string
+		baseName    string
+		functions   []PHPFunction
+		classes     []PHPClass
+		contains    []string
+		notContains []string
 	}{
 		{
 			name:     "empty extension",
@@ -86,6 +87,7 @@ func TestCFileGenerator_BuildContent(t *testing.T) {
 				"PHP_MINIT_FUNCTION(empty)",
 				"empty_module_entry",
 				"register_extension()",
+				"return SUCCESS;",
 			},
 		},
 		{
@@ -98,6 +100,7 @@ func TestCFileGenerator_BuildContent(t *testing.T) {
 				"PHP_FUNCTION(testFunc)",
 				`#include "func_only.h"`,
 				"func_only_module_entry",
+				"PHP_MINIT_FUNCTION(func_only)",
 			},
 		},
 		{
@@ -108,6 +111,7 @@ func TestCFileGenerator_BuildContent(t *testing.T) {
 			},
 			contains: []string{
 				"register_all_classes()",
+				"register_class_MyClass();",
 				"PHP_METHOD(MyClass, __construct)",
 				`#include "class_only.h"`,
 			},
@@ -125,6 +129,7 @@ func TestCFileGenerator_BuildContent(t *testing.T) {
 				"PHP_FUNCTION(doSomething)",
 				"PHP_METHOD(FullClass, __construct)",
 				"register_all_classes()",
+				"register_class_FullClass();",
 				`#include "full.h"`,
 			},
 		},
@@ -139,7 +144,10 @@ func TestCFileGenerator_BuildContent(t *testing.T) {
 			}
 
 			cGen := CFileGenerator{generator}
-			content := cGen.buildContent()
+			content, err := cGen.buildContent()
+			if err != nil {
+				t.Fatalf("buildContent() failed: %v", err)
+			}
 
 			for _, expected := range tt.contains {
 				if !strings.Contains(content, expected) {
@@ -152,10 +160,14 @@ func TestCFileGenerator_BuildContent(t *testing.T) {
 
 func TestCFileGenerator_GetTemplateContent(t *testing.T) {
 	tests := []struct {
-		baseName string
-		contains []string
+		name        string
+		baseName    string
+		classes     []PHPClass
+		contains    []string
+		notContains []string
 	}{
 		{
+			name:     "extension without classes",
 			baseName: "myext",
 			contains: []string{
 				`#include "myext.h"`,
@@ -163,28 +175,49 @@ func TestCFileGenerator_GetTemplateContent(t *testing.T) {
 				"PHP_MINIT_FUNCTION(myext)",
 				"myext_module_entry",
 				"register_extension()",
+				"return SUCCESS;",
 			},
 		},
 		{
+			name:     "extension with classes",
 			baseName: "complex_name",
+			classes: []PHPClass{
+				{Name: "TestClass", GoStruct: "TestStruct"},
+				{Name: "AnotherClass", GoStruct: "AnotherStruct"},
+			},
 			contains: []string{
 				`#include "complex_name.h"`,
 				`#include "complex_name_arginfo.h"`,
 				"PHP_MINIT_FUNCTION(complex_name)",
 				"complex_name_module_entry",
+				"register_all_classes()",
+				"register_class_TestClass();",
+				"register_class_AnotherClass();",
 			},
 		},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.baseName, func(t *testing.T) {
-			generator := &Generator{BaseName: tt.baseName}
+		t.Run(tt.name, func(t *testing.T) {
+			generator := &Generator{
+				BaseName: tt.baseName,
+				Classes:  tt.classes,
+			}
 			cGen := CFileGenerator{generator}
-			content := cGen.getTemplateContent()
+			content, err := cGen.getTemplateContent()
+			if err != nil {
+				t.Fatalf("getTemplateContent() failed: %v", err)
+			}
 
 			for _, expected := range tt.contains {
 				if !strings.Contains(content, expected) {
-					t.Errorf("Template content should contain '%s'", expected)
+					t.Errorf("Template content should contain '%s'\nGenerated:\n%s", expected, content)
+				}
+			}
+
+			for _, notExpected := range tt.notContains {
+				if strings.Contains(content, notExpected) {
+					t.Errorf("Template content should NOT contain '%s'\nGenerated:\n%s", notExpected, content)
 				}
 			}
 		})
@@ -327,7 +360,10 @@ func TestCFileSpecialCharacters(t *testing.T) {
 			}
 
 			cGen := CFileGenerator{generator}
-			content := cGen.buildContent()
+			content, err := cGen.buildContent()
+			if err != nil {
+				t.Fatalf("buildContent() failed: %v", err)
+			}
 
 			expectedInclude := "#include \"" + tt.expected + ".h\""
 			if !strings.Contains(content, expectedInclude) {
@@ -369,8 +405,9 @@ func testCFileFunctions(t *testing.T, content string, functions []PHPFunction) {
 
 func testCFileClasses(t *testing.T, content string, classes []PHPClass) {
 	if len(classes) == 0 {
-		if !strings.Contains(content, "void register_all_classes() {\n    // No classes to register\n}") {
-			t.Error("C file should contain empty class registration for no classes")
+		// Si pas de classes, ne devrait pas contenir register_all_classes
+		if strings.Contains(content, "register_all_classes()") {
+			t.Error("C file should NOT contain register_all_classes call when no classes")
 		}
 		return
 	}
@@ -379,21 +416,19 @@ func testCFileClasses(t *testing.T, content string, classes []PHPClass) {
 		t.Error("C file should contain register_all_classes function")
 	}
 
+	if !strings.Contains(content, "register_all_classes();") {
+		t.Error("C file should contain register_all_classes call in MINIT")
+	}
+
 	for _, class := range classes {
+		expectedCall := "register_class_" + class.Name + "();"
+		if !strings.Contains(content, expectedCall) {
+			t.Errorf("C file should contain class registration call: %s", expectedCall)
+		}
+
 		constructor := "PHP_METHOD(" + class.Name + ", __construct)"
 		if !strings.Contains(content, constructor) {
 			t.Errorf("C file should contain constructor: %s", constructor)
-		}
-
-		className := SanitizePackageName(strings.ToLower(class.Name))
-		classEntry := "static zend_class_entry *" + className + "_ce = NULL;"
-		if !strings.Contains(content, classEntry) {
-			t.Errorf("C file should contain class entry variable: %s", classEntry)
-		}
-
-		registerCall := className + "_ce = register_class_" + class.Name + "();"
-		if !strings.Contains(content, registerCall) {
-			t.Errorf("C file should contain class registration: %s", registerCall)
 		}
 	}
 }
@@ -410,10 +445,16 @@ func TestCFileContentValidation(t *testing.T) {
 				},
 			},
 		},
+		Classes: []PHPClass{
+			{Name: "TestClass", GoStruct: "TestStruct"},
+		},
 	}
 
 	cGen := CFileGenerator{generator}
-	content := cGen.buildContent()
+	content, err := cGen.buildContent()
+	if err != nil {
+		t.Fatalf("buildContent() failed: %v", err)
+	}
 
 	syntaxElements := []string{
 		"{", "}", "(", ")", ";",
@@ -437,7 +478,20 @@ func TestCFileContentValidation(t *testing.T) {
 		t.Error("Generated C code contains double semicolons")
 	}
 
-	if strings.Contains(content, "{{") && !strings.Contains(content, "struct") {
-		t.Error("Generated C code may contain syntax errors (double braces)")
+	if strings.Contains(content, "{{") || strings.Contains(content, "}}") {
+		t.Error("Generated C code contains unresolved template syntax")
+	}
+}
+
+func TestCFileTemplateErrorHandling(t *testing.T) {
+	generator := &Generator{
+		BaseName: "error_test",
+	}
+
+	cGen := CFileGenerator{generator}
+
+	_, err := cGen.getTemplateContent()
+	if err != nil {
+		t.Errorf("getTemplateContent() should not fail with valid template: %v", err)
 	}
 }

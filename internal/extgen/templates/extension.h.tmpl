@@ -1,31 +1,17 @@
-#ifndef _%s
-#define _%s
+#ifndef _{{.HeaderGuard}}
+#define _{{.HeaderGuard}}
 
-#include <Zend/zend_types.h>
-#include "types.h"
+#include <php.h>
 
 void register_extension();
-void cleanup_go_value(go_value*);
-void cleanup_go_array(go_array*);
-void cleanup_go_object(go_object*);
-void cleanup_go_nullable(go_nullable*);
-void cleanup_go_object_property(go_object_property*);
-void cleanup_go_array_element(go_array_element *);
-go_array* zval_to_go_array(zval *arr);
-go_object* zval_to_go_object(zval *obj);
-void go_array_to_zval(go_array *arr, zval *return_value);
-void go_object_to_zval(go_object *obj, zval *return_value);
 
-void register_all_classes();
+extern zend_module_entry ext_module_entry;
 
-int get_property_visibility(zend_class_entry *ce, const char *property_name);
-void set_property_with_visibility(zval *object, zend_class_entry *ce, const char *property_name, zval *value);
+typedef struct go_value go_value;
 
-go_nullable* create_nullable_string(char* str, size_t len, int is_null);
-go_nullable* create_nullable_long(long val, int is_null);
-go_nullable* create_nullable_double(double val, int is_null);
-go_nullable* create_nullable_bool(int val, int is_null);
-go_nullable* create_nullable_array(zval* arr, int is_null);
-go_nullable* create_nullable_object(zval* obj, int is_null);
+typedef struct go_string {
+  size_t len;
+  char *data;
+} go_string;
 
 #endif

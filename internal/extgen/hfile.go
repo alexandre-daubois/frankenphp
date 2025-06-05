@@ -1,10 +1,12 @@
+// header.go
 package extgen
 
 import (
+	"bytes"
 	_ "embed"
-	"fmt"
 	"path/filepath"
 	"strings"
+	"text/template"
 )
 
 //go:embed templates/extension.h.tmpl
@@ -14,13 +16,20 @@ type HeaderGenerator struct {
 	generator *Generator
 }
 
+type TemplateData struct {
+	HeaderGuard string
+}
+
 func (hg *HeaderGenerator) generate() error {
 	filename := filepath.Join(hg.generator.BuildDir, hg.generator.BaseName+".h")
-	content := hg.buildContent()
+	content, err := hg.buildContent()
+	if err != nil {
+		return err
+	}
 	return WriteFile(filename, content)
 }
 
-func (hg *HeaderGenerator) buildContent() string {
+func (hg *HeaderGenerator) buildContent() (string, error) {
 	headerGuard := strings.Map(func(r rune) rune {
 		if r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
 			return r
@@ -31,5 +40,19 @@ func (hg *HeaderGenerator) buildContent() string {
 
 	headerGuard = strings.ToUpper(headerGuard) + "_H"
 
-	return fmt.Sprintf(hFileContent, headerGuard, headerGuard)
+	tmpl, err := template.New("header").Parse(hFileContent)
+	if err != nil {
+		return "", err
+	}
+
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, TemplateData{
+		HeaderGuard: headerGuard,
+	})
+
+	if err != nil {
+		return "", err
+	}
+
+	return buf.String(), nil
 }

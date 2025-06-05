@@ -75,7 +75,7 @@ func anotherHelper() {
 		t.Fatalf("generate() failed: %v", err)
 	}
 
-	expectedFile := filepath.Join(tmpDir, "testext.go")
+	expectedFile := filepath.Join(tmpDir, "test.go")
 	if _, err := os.Stat(expectedFile); os.IsNotExist(err) {
 		t.Errorf("Expected Go file was not created: %s", expectedFile)
 	}

@@ -7,21 +7,24 @@
 
 static int (*original_php_register_internal_extensions_func)(void) = NULL;
 
-void register_all_classes() {
-    {{range .Classes}}{{.Name}}_ce = register_class_{{.Name}}();
-    if (!{{.Name}}) {
-        php_error_docref(NULL, E_ERROR, "Failed to register class {{.Name}}");
-        return;
-    }
-{{end}}
-}
+{{range .Classes}}static zend_class_entry *{{.Name}}_ce = NULL;
 
-{{range .Classes}}PHP_METHOD({{.Name}}, __construct) {
+PHP_METHOD({{.Name}}, __construct) {
     if (zend_parse_parameters_none() == FAILURE) {
         RETURN_THROWS();
     }
 }
 {{end}}
+
+{{if .Classes}}
+void register_all_classes() {
+    {{range .Classes}}{{.Name}}_ce = register_class_{{.Name}}();
+    if (!{{.Name}}_ce) {
+        php_error_docref(NULL, E_ERROR, "Failed to register class {{.Name}}");
+        return;
+    }
+{{end}}
+}{{end}}
 
 PHP_MINIT_FUNCTION({{.BaseName}}) {
     {{if .Classes}}register_all_classes();{{end}}

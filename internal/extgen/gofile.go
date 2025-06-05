@@ -11,7 +11,7 @@ type GoFileGenerator struct {
 }
 
 func (gg *GoFileGenerator) generate() error {
-	filename := filepath.Join(gg.generator.BuildDir, gg.generator.BaseName+"ext.go")
+	filename := filepath.Join(gg.generator.BuildDir, gg.generator.BaseName+".go")
 	content, err := gg.buildContent()
 	if err != nil {
 		return fmt.Errorf("building Go file content: %w", err)

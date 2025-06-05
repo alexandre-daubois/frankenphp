@@ -37,7 +37,11 @@ func cmdInitExtension(fs caddycmd.Flags) (int, error) {
 	baseName := strings.TrimSuffix(filepath.Base(sourceFile), ".go")
 
 	baseName = extgen.SanitizePackageName(baseName)
-	generator := extgen.Generator{BaseName: baseName, SourceFile: sourceFile, BuildDir: extgen.BuildDir}
+
+	sourceDir := filepath.Dir(sourceFile)
+	buildDir := filepath.Join(sourceDir, "build")
+
+	generator := extgen.Generator{BaseName: baseName, SourceFile: sourceFile, BuildDir: buildDir}
 
 	if err := generator.Generate(); err != nil {
 		return 1, err

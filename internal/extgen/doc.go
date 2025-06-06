@@ -7,7 +7,7 @@ import (
 	"text/template"
 )
 
-//go:embed templates/README.md.tmpl
+//go:embed templates/README.md.tpl
 var docFileContent string
 
 type DocumentationGenerator struct {

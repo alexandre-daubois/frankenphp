@@ -9,7 +9,7 @@ import (
 	"text/template"
 )
 
-//go:embed templates/extension.h.tmpl
+//go:embed templates/extension.h.tpl
 var hFileContent string
 
 type HeaderGenerator struct {

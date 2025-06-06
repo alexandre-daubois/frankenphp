@@ -152,7 +152,7 @@ func TestTypeToString(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
-		expected []string // expected property types
+		expected []string
 	}{
 		{
 			name: "basic types",

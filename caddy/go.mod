@@ -4,8 +4,6 @@ go 1.24.0
 
 replace github.com/dunglas/frankenphp => ../
 
-replace doc-fp => ../../doc-fp
-
 retract v1.0.0-rc.1 // Human error
 
 require (
@@ -25,7 +23,6 @@ require github.com/smallstep/go-attestation v0.4.4-0.20241119153605-2306d5b464ca
 require (
 	cel.dev/expr v0.24.0 // indirect
 	dario.cat/mergo v1.0.2 // indirect
-	doc-fp v0.0.0-00010101000000-000000000000 // indirect
 	filippo.io/edwards25519 v1.1.0 // indirect
 	github.com/AndreasBriese/bbloom v0.0.0-20190825152654-46b345b51c96 // indirect
 	github.com/BurntSushi/toml v1.5.0 // indirect

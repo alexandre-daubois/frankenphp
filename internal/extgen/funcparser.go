@@ -53,7 +53,6 @@ func (fp *FuncParser) parse(filename string) ([]PHPFunction, error) {
 			currentPHPFunc = phpFunc
 		}
 
-		// Check for the corresponding Go function
 		if currentPHPFunc != nil && strings.HasPrefix(line, "func "+currentPHPFunc.Name+"(") {
 			goFunc, err := fp.extractGoFunction(scanner, line)
 			if err != nil {

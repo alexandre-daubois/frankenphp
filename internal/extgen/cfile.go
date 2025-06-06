@@ -8,7 +8,7 @@ import (
 	"text/template"
 )
 
-//go:embed templates/extension.c.tmpl
+//go:embed templates/extension.c.tpl
 var cFileContent string
 
 type CFileGenerator struct {

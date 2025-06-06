@@ -48,7 +48,7 @@ import (
 )
 
 //export_php repeat_this(string $str, int $count, bool $reverse): string
-func repeat_this(s *C.zend_string, count int64, reverse bool) unsafe.Pointer {
+func RepeatThis(s *C.zend_string, count int64, reverse bool) unsafe.Pointer {
     str := frankenphp.GoString(unsafe.Pointer(s))
 
     result := strings.Repeat(str, int(count))
@@ -67,7 +67,7 @@ func repeat_this(s *C.zend_string, count int64, reverse bool) unsafe.Pointer {
 There are two important things to note here:
 
 * A directive comment `//export_php` defines the function signature in PHP. This is how the generator knows how to
-  generate the PHP function with the right parameters and return type.
+  generate the PHP function with the right parameters and return type. The Go function name doesn't need to match the name of the exported function;
 * The function must return an `unsafe.Pointer`. FrankenPHP provides an API to help you with type juggling between C and
   Go.
 

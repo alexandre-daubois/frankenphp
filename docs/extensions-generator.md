@@ -100,10 +100,10 @@ converted as memory representation of the underlying types are the same for both
 ## Declaring a Native PHP Class
 
 The generator also supports declaring classes as Go structs, which can be used to create PHP objects. You can use the
-`// php_class` directive comment to define a class in Go. For example:
+`// export_php` directive comment again to define a PHP class. For example:
 
 ```go
-// php_class: FrankenPhp
+// export_php: class FrankenPhp
 type FrankenPhpGoStruct struct {
     Name       string
     Type       int

@@ -15,7 +15,7 @@ func TestClassParser(t *testing.T) {
 			name: "single class",
 			input: `package main
 
-// php_class: User
+//export_php class User
 type UserStruct struct {
 	Name string
 	Age  int
@@ -26,13 +26,13 @@ type UserStruct struct {
 			name: "multiple classes",
 			input: `package main
 
-// php_class: User
+//export_php class User
 type UserStruct struct {
 	Name string
 	Age  int
 }
 
-// php_class: Product
+//export_php: class Product
 type ProductStruct struct {
 	Title string
 	Price float64
@@ -52,7 +52,7 @@ type RegularStruct struct {
 			name: "class with nullable fields",
 			input: `package main
 
-// php_class: OptionalData
+//export_php: class OptionalData
 type OptionalStruct struct {
 	Required string
 	Optional *string
@@ -158,7 +158,7 @@ func TestTypeToString(t *testing.T) {
 			name: "basic types",
 			input: `package main
 
-// php_class: TestClass
+// export_php class TestClass
 type TestStruct struct {
 	StringField string
 	IntField    int
@@ -171,7 +171,7 @@ type TestStruct struct {
 			name: "pointer types",
 			input: `package main
 
-// php_class: NullableClass
+// export_php class NullableClass
 type NullableStruct struct {
 	NullableString *string
 	NullableInt    *int
@@ -184,7 +184,7 @@ type NullableStruct struct {
 			name: "collection types",
 			input: `package main
 
-// php_class: CollectionClass
+//export_php: class CollectionClass
 type CollectionStruct struct {
 	StringSlice []string
 	IntMap      map[string]int

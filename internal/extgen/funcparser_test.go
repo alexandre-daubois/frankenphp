@@ -74,6 +74,21 @@ func phpFunc(data *go_string) *go_value {
 }`,
 			expected: 0,
 		},
+		{
+			name: "decoupled function names",
+			input: `package main
+
+//export_php: my_php_function(string $name): string
+func myGoFunction(name *go_string) *go_value {
+	return String("Hello " + CStringToGoString(name))
+}
+
+//export_php: another_php_func(int $num): int
+func someOtherGoName(num long) *go_value {
+	return Int(num * 5)
+}`,
+			expected: 2,
+		},
 	}
 
 	for _, tt := range tests {
@@ -112,6 +127,17 @@ func phpFunc(data *go_string) *go_value {
 				}
 				if len(fn.Params) > 0 && fn.Params[0].Name != "name" {
 					t.Errorf("Expected parameter name 'name', got '%s'", fn.Params[0].Name)
+				}
+			}
+
+			if tt.name == "decoupled function names" && len(functions) >= 2 {
+				fn1 := functions[0]
+				if fn1.Name != "my_php_function" {
+					t.Errorf("Expected PHP function name 'my_php_function', got '%s'", fn1.Name)
+				}
+				fn2 := functions[1]
+				if fn2.Name != "another_php_func" {
+					t.Errorf("Expected PHP function name 'another_php_func', got '%s'", fn2.Name)
 				}
 			}
 		})

@@ -22,28 +22,10 @@ func TestPHPFunctionGenerator_Generate(t *testing.T) {
 			},
 			contains: []string{
 				"PHP_FUNCTION(greet)",
-				"char *name = NULL;",
-				"size_t name_len = 0;",
-				"Z_PARAM_STRING(name, name_len)",
-				"go_value *result = greet(",
-				"RETVAL_STRINGL(result->data.str_val, result->str_len)",
-			},
-		},
-		{
-			name: "function with nullable parameter",
-			function: PHPFunction{
-				Name:       "process",
-				ReturnType: "int",
-				Params: []Parameter{
-					{Name: "data", Type: "string", IsNullable: true},
-				},
-			},
-			contains: []string{
-				"PHP_FUNCTION(process)",
-				"zend_bool data_is_null = 0;",
-				"Z_PARAM_STRING_OR_NULL(data, data_len)",
-				"go_nullable* data_nullable_ptr = NULL;",
-				"create_nullable_string(data, data_len, data_is_null)",
+				"zend_string *name = NULL;",
+				"Z_PARAM_STR(name)",
+				"zend_string *result = greet(name);",
+				"RETURN_STR(result)",
 			},
 		},
 		{
@@ -77,24 +59,39 @@ func TestPHPFunctionGenerator_Generate(t *testing.T) {
 			},
 			contains: []string{
 				"PHP_FUNCTION(doSomething)",
-				"doSomething(",
+				"doSomething(action);",
 			},
 		},
 		{
-			name: "function with array parameter",
+			name: "bool function with default",
 			function: PHPFunction{
-				Name:       "processArray",
-				ReturnType: "array",
+				Name:       "isEnabled",
+				ReturnType: "bool",
 				Params: []Parameter{
-					{Name: "items", Type: "array"},
+					{Name: "flag", Type: "bool", HasDefault: true, DefaultValue: "true"},
 				},
 			},
 			contains: []string{
-				"PHP_FUNCTION(processArray)",
-				"zval *items = NULL;",
-				"Z_PARAM_ARRAY(items)",
-				"zval_to_go_array(items)",
-				"go_array_to_zval(result->data.array_val, return_value)",
+				"PHP_FUNCTION(isEnabled)",
+				"zend_bool flag = 1;",
+				"Z_PARAM_BOOL(flag)",
+				"RETURN_BOOL(result)",
+			},
+		},
+		{
+			name: "float function",
+			function: PHPFunction{
+				Name:       "calculate",
+				ReturnType: "float",
+				Params: []Parameter{
+					{Name: "value", Type: "float"},
+				},
+			},
+			contains: []string{
+				"PHP_FUNCTION(calculate)",
+				"double value = 0.0;",
+				"Z_PARAM_DOUBLE(value)",
+				"RETURN_DOUBLE(result)",
 			},
 		},
 	}
@@ -133,19 +130,16 @@ func TestPHPFunctionGenerator_GenerateParamDeclarations(t *testing.T) {
 				{Name: "message", Type: "string"},
 			},
 			contains: []string{
-				"char *message = NULL;",
-				"size_t message_len = 0;",
+				"zend_string *message = NULL;",
 			},
 		},
 		{
-			name: "nullable int parameter",
+			name: "int parameter",
 			params: []Parameter{
-				{Name: "count", Type: "int", IsNullable: true},
+				{Name: "count", Type: "int"},
 			},
 			contains: []string{
 				"zend_long count = 0;",
-				"zval *count_zval = NULL;",
-				"zend_bool count_is_null = 0;",
 			},
 		},
 		{
@@ -155,6 +149,15 @@ func TestPHPFunctionGenerator_GenerateParamDeclarations(t *testing.T) {
 			},
 			contains: []string{
 				"zend_bool enabled = 1;",
+			},
+		},
+		{
+			name: "float parameter with default",
+			params: []Parameter{
+				{Name: "rate", Type: "float", HasDefault: true, DefaultValue: "1.5"},
+			},
+			contains: []string{
+				"double rate = 1.5;",
 			},
 		},
 	}
@@ -177,62 +180,55 @@ func TestPHPFunctionGenerator_GenerateReturnCode(t *testing.T) {
 	tests := []struct {
 		name       string
 		returnType string
-		nullable   bool
 		contains   []string
 	}{
 		{
 			name:       "string return",
 			returnType: "string",
-			nullable:   false,
 			contains: []string{
-				"RETVAL_STRINGL(result->data.str_val, result->str_len)",
-				"RETVAL_EMPTY_STRING()",
-				"cleanup_go_value(result)",
-			},
-		},
-		{
-			name:       "nullable string return",
-			returnType: "string",
-			nullable:   true,
-			contains: []string{
-				"RETVAL_STRINGL(result->data.str_val, result->str_len)",
-				"RETVAL_NULL()",
-				"cleanup_go_value(result)",
+				"RETURN_STR(result)",
+				"RETURN_EMPTY_STRING()",
 			},
 		},
 		{
 			name:       "int return",
 			returnType: "int",
-			nullable:   false,
 			contains: []string{
-				"RETVAL_LONG(result->data.int_val)",
-				"RETVAL_LONG(0)",
+				"RETURN_LONG(result)",
 			},
 		},
 		{
 			name:       "bool return",
 			returnType: "bool",
-			nullable:   false,
 			contains: []string{
-				"RETVAL_BOOL(result->data.bool_val)",
-				"RETVAL_FALSE",
+				"RETURN_BOOL(result)",
 			},
 		},
 		{
-			name:       "array return",
-			returnType: "array",
-			nullable:   false,
+			name:       "float return",
+			returnType: "float",
 			contains: []string{
-				"go_array_to_zval(result->data.array_val, return_value)",
-				"array_init(return_value)",
+				"RETURN_DOUBLE(result)",
 			},
+		},
+		{
+			name:       "void return",
+			returnType: "void",
+			contains:   []string{},
 		},
 	}
 
 	generator := PHPFuncGenerator{}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := generator.generateReturnCode(tt.returnType, tt.nullable)
+			result := generator.generateReturnCode(tt.returnType)
+
+			if len(tt.contains) == 0 {
+				if result != "" {
+					t.Errorf("Return code should be empty for void, got: %s", result)
+				}
+				return
+			}
 
 			for _, expected := range tt.contains {
 				if !strings.Contains(result, expected) {
@@ -259,14 +255,14 @@ func TestPHPFunctionGenerator_GenerateGoCallParams(t *testing.T) {
 			params: []Parameter{
 				{Name: "message", Type: "string"},
 			},
-			expected: "&(go_string){message_len, message}",
+			expected: "message",
 		},
 		{
-			name: "nullable parameter",
+			name: "int parameter",
 			params: []Parameter{
-				{Name: "data", Type: "string", IsNullable: true},
+				{Name: "count", Type: "int"},
 			},
-			expected: "data_nullable_ptr",
+			expected: "(long) count",
 		},
 		{
 			name: "multiple parameters",
@@ -274,7 +270,15 @@ func TestPHPFunctionGenerator_GenerateGoCallParams(t *testing.T) {
 				{Name: "name", Type: "string"},
 				{Name: "age", Type: "int"},
 			},
-			expected: "&(go_string){name_len, name}, (long)age",
+			expected: "name, (long) age",
+		},
+		{
+			name: "bool and float parameters",
+			params: []Parameter{
+				{Name: "enabled", Type: "bool"},
+				{Name: "rate", Type: "float"},
+			},
+			expected: "(int) enabled, (double) rate",
 		},
 	}
 

@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-var phpFuncRegex = regexp.MustCompile(`//\s*export_php:?\s*(?:function\s+)?([^{}\n]+)(?:\s*\{\s*\})?`)
+var phpFuncRegex = regexp.MustCompile(`//\s*export_php:?\s*function\s+([^{}\n]+)(?:\s*{\s*})?`)
 var signatureRegex = regexp.MustCompile(`(\w+)\s*\(([^)]*)\)\s*:\s*(\??[\w|]+)`)
 var typeNameRegex = regexp.MustCompile(`(\??[\w|]+)\s+\$?(\w+)`)
 
@@ -34,7 +34,9 @@ func (fp *FuncParser) parse(filename string) ([]PHPFunction, error) {
 	var currentPHPFunc *PHPFunction
 	validator := NewValidator()
 
+	lineNumber := 0
 	for scanner.Scan() {
+		lineNumber++
 		line := strings.TrimSpace(scanner.Text())
 
 		if matches := fp.phpFuncRegex.FindStringSubmatch(line); matches != nil {
@@ -50,6 +52,7 @@ func (fp *FuncParser) parse(filename string) ([]PHPFunction, error) {
 				continue
 			}
 
+			phpFunc.LineNumber = lineNumber
 			currentPHPFunc = phpFunc
 		}
 
@@ -62,6 +65,10 @@ func (fp *FuncParser) parse(filename string) ([]PHPFunction, error) {
 			functions = append(functions, *currentPHPFunc)
 			currentPHPFunc = nil
 		}
+	}
+
+	if currentPHPFunc != nil {
+		return nil, fmt.Errorf("//export_php function directive at line %d is not followed by a function declaration", currentPHPFunc.LineNumber)
 	}
 
 	return functions, scanner.Err()

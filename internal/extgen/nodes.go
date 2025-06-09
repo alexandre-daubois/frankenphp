@@ -7,6 +7,7 @@ type PHPFunction struct {
 	Params           []Parameter
 	ReturnType       string
 	IsReturnNullable bool
+	LineNumber       int
 }
 
 type Parameter struct {

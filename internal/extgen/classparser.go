@@ -11,6 +11,11 @@ import (
 
 var phpClassRegex = regexp.MustCompile(`//\s*export_php:?\s*class\s+(\w+)`)
 
+type ExportDirective struct {
+	Line      int
+	ClassName string
+}
+
 type ClassParser struct{}
 
 func (cp *ClassParser) parse(filename string) ([]PHPClass, error) {
@@ -22,6 +27,11 @@ func (cp *ClassParser) parse(filename string) ([]PHPClass, error) {
 
 	var classes []PHPClass
 	validator := NewValidator()
+
+	exportDirectives := cp.collectExportDirectives(node, fset)
+
+	// match structs to directives
+	matchedDirectives := make(map[int]bool)
 
 	var genDecl *ast.GenDecl
 	var ok bool
@@ -42,9 +52,12 @@ func (cp *ClassParser) parse(filename string) ([]PHPClass, error) {
 			}
 
 			var phpClass string
-			if phpClass = cp.extractPHPClassComment(genDecl.Doc); phpClass == "" {
+			var directiveLine int
+			if phpClass, directiveLine = cp.extractPHPClassCommentWithLine(genDecl.Doc, fset); phpClass == "" {
 				continue
 			}
+
+			matchedDirectives[directiveLine] = true
 
 			class := PHPClass{
 				Name:     phpClass,
@@ -62,7 +75,46 @@ func (cp *ClassParser) parse(filename string) ([]PHPClass, error) {
 		}
 	}
 
+	for _, directive := range exportDirectives {
+		if !matchedDirectives[directive.Line] {
+			return nil, fmt.Errorf("//export_php class directive at line %d is not followed by a struct declaration", directive.Line)
+		}
+	}
+
 	return classes, nil
+}
+
+func (cp *ClassParser) collectExportDirectives(node *ast.File, fset *token.FileSet) []ExportDirective {
+	var directives []ExportDirective
+
+	for _, commentGroup := range node.Comments {
+		for _, comment := range commentGroup.List {
+			if matches := phpClassRegex.FindStringSubmatch(comment.Text); matches != nil {
+				pos := fset.Position(comment.Pos())
+				directives = append(directives, ExportDirective{
+					Line:      pos.Line,
+					ClassName: matches[1],
+				})
+			}
+		}
+	}
+
+	return directives
+}
+
+func (cp *ClassParser) extractPHPClassCommentWithLine(commentGroup *ast.CommentGroup, fset *token.FileSet) (string, int) {
+	if commentGroup == nil {
+		return "", 0
+	}
+
+	for _, comment := range commentGroup.List {
+		if matches := phpClassRegex.FindStringSubmatch(comment.Text); matches != nil {
+			pos := fset.Position(comment.Pos())
+			return matches[1], pos.Line
+		}
+	}
+
+	return "", 0
 }
 
 func (cp *ClassParser) extractPHPClassComment(commentGroup *ast.CommentGroup) string {

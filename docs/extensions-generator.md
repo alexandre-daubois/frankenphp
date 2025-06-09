@@ -47,7 +47,7 @@ import (
     "strings"
 )
 
-//export_php repeat_this(string $str, int $count, bool $reverse): string
+//export_php function repeat_this(string $str, int $count, bool $reverse): string
 func RepeatThis(s *C.zend_string, count int64, reverse bool) unsafe.Pointer {
     str := frankenphp.GoString(unsafe.Pointer(s))
 
@@ -100,10 +100,10 @@ converted as memory representation of the underlying types are the same for both
 ## Declaring a Native PHP Class
 
 The generator also supports declaring classes as Go structs, which can be used to create PHP objects. You can use the
-`// export_php` directive comment again to define a PHP class. For example:
+`// export_php` directive comment to define a PHP class. For example:
 
 ```go
-// export_php: class FrankenPhp
+// export_php class FrankenPhp
 type FrankenPhpGoStruct struct {
     Name       string
     Type       int

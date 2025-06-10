@@ -80,17 +80,20 @@ directly used. This is maybe the hardest part when it comes to writing extension
 internals of the Zend Engine and how variables are stored internally in PHP. This table summarizes what you need to
 know:
 
-| PHP type | Go type       | Direct conversion | C to Go helper        | Go to C helper         |
-|----------|---------------|-------------------|-----------------------|------------------------|
-| `int`    | `int64`       | ✅                 | -                     | -                      |
-| `float`  | `float64`     | ✅                 | -                     | -                      | 
-| `bool`   | `bool`        | ✅                 | -                     | -                      |
-| `string` | `string`      | ❌                 | frankenphp.GoString() | frankenphp.PHPString() |
-| `array`  | `slice`/`map` | ❌                 | _Not yet implemented_ | _Not yet implemented_  |
-| `object` | `struct`      | ❌                 | _Not yet implemented_ | _Not yet implemented_  |
+| PHP type | Go type       | Direct conversion | C to Go helper        | Go to C helper         | Class Methods Support |
+|----------|---------------|-------------------|-----------------------|------------------------|----------------------|
+| `int`    | `int64`       | ✅                 | -                     | -                      | ✅                    |
+| `float`  | `float64`     | ✅                 | -                     | -                      | ✅                    |
+| `bool`   | `bool`        | ✅                 | -                     | -                      | ✅                    |
+| `string` | `string`      | ❌                 | frankenphp.GoString() | frankenphp.PHPString() | ✅                    |
+| `array`  | `slice`/`map` | ❌                 | _Not yet implemented_ | _Not yet implemented_  | ❌                    |
+| `object` | `struct`      | ❌                 | _Not yet implemented_ | _Not yet implemented_  | ❌                    |
 
 > [!NOTE]
 > This table is not exhaustive yet and will be completed as the FrankenPHP types API gets more complete.
+>
+> For class methods specifically, only primitive types are currently supported. Arrays and objects cannot
+> be used as method parameters or return types yet.
 
 If you refer to the code snippet of the previous section, you can see that helpers are used to convert the first
 parameter and the return value. The second and third parameter of our `repeat_this()` function don't need to be
@@ -177,6 +180,53 @@ type FrankenPhpGoStruct struct {
 
 That's it. The generator will automatically generate the PHP class with the properties defined in the Go struct. You can
 then use this class in your PHP code.
+
+### Adding Methods to Classes
+
+You can also add methods to your PHP classes using the `//export_php:method` directive. This allows you to define
+behavior for your classes:
+
+
+```go
+//export_php:class User
+type UserStruct struct {
+    Name string
+    Age  int
+}
+
+//export_php:method User::getName(): string
+func (us *UserStruct) GetUserName() unsafe.Pointer {
+    return frankenphp.PHPString(us.Name)
+}
+
+//export_php:method User::setAge(int $age): void
+func (us *UserStruct) SetUserAge(age int64) {
+    u.Age = age
+}
+
+//export_php:method User::setNamePrefix(string $prefix = "User"): void
+func (us *UserStruct) SetNamePrefix(prefix *C.zend_string) {
+    u.Name = frankenphp.GoString(unsafe.Pointer(prefix)) + ": " + u.Name
+}
+```
+
+> [!WARNING]
+> **Method Parameter and Return Type Limitations**
+> 
+> Currently, class methods have the following limitations:
+> - **Arrays and objects are not supported** as parameter types or return types
+> - Only primitive types are supported: `string`, `int`, `float`, `bool` and `void` (for return type)
+
+After generating the extension, you can use the class and its methods in PHP:
+
+```php
+<?php
+
+$user = new User();
+$user->setAge(25);
+echo $user->getName(); // Output: User name
+echo $user->setNamePrefix("Employee"); // Output: Employee: User name
+```
 
 ## Generating the Extension
 

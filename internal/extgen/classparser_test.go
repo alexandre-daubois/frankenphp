@@ -60,6 +60,27 @@ type OptionalStruct struct {
 }`,
 			expected: 1,
 		},
+		{
+			name: "class with methods",
+			input: `package main
+
+//export_php:class User
+type UserStruct struct {
+	Name string
+	Age  int
+}
+
+//export_php:method User::getName(): string
+func GetUserName(u UserStruct) string {
+	return u.Name
+}
+
+//export_php:method User::setAge(int $age): void
+func SetUserAge(u *UserStruct, age int) {
+	u.Age = age
+}`,
+			expected: 1,
+		},
 	}
 
 	for _, tt := range tests {
@@ -111,6 +132,219 @@ type OptionalStruct struct {
 						t.Errorf("Count field should be nullable")
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestClassMethods(t *testing.T) {
+	input := `package main
+
+//export_php:class User
+type UserStruct struct {
+	Name string
+	Age  int
+}
+
+//export_php:method User::getName(): string
+func GetUserName(u UserStruct) string {
+	return u.Name
+}
+
+//export_php:method User::setAge(int $age): void
+func SetUserAge(u *UserStruct, age int) {
+	u.Age = age
+}
+
+//export_php:method User::getInfo(string $prefix = "User"): string
+func GetUserInfo(u UserStruct, prefix string) string {
+	return prefix + ": " + u.Name
+}`
+
+	tmpfile, err := os.CreateTemp("", "test*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(tmpfile.Name())
+
+	if _, err := tmpfile.Write([]byte(input)); err != nil {
+		t.Fatal(err)
+	}
+	tmpfile.Close()
+
+	parser := ClassParser{}
+	classes, err := parser.parse(tmpfile.Name())
+	if err != nil {
+		t.Fatalf("parse() error = %v", err)
+	}
+
+	if len(classes) != 1 {
+		t.Fatalf("Expected 1 class, got %d", len(classes))
+	}
+
+	class := classes[0]
+	if len(class.Methods) != 3 {
+		t.Fatalf("Expected 3 methods, got %d", len(class.Methods))
+	}
+
+	getName := class.Methods[0]
+	if getName.Name != "getName" {
+		t.Errorf("Expected method name 'getName', got '%s'", getName.Name)
+	}
+	if getName.ReturnType != "string" {
+		t.Errorf("Expected return type 'string', got '%s'", getName.ReturnType)
+	}
+	if len(getName.Params) != 0 {
+		t.Errorf("Expected 0 params, got %d", len(getName.Params))
+	}
+	if getName.ClassName != "User" {
+		t.Errorf("Expected class name 'User', got '%s'", getName.ClassName)
+	}
+
+	setAge := class.Methods[1]
+	if setAge.Name != "setAge" {
+		t.Errorf("Expected method name 'setAge', got '%s'", setAge.Name)
+	}
+	if setAge.ReturnType != "void" {
+		t.Errorf("Expected return type 'void', got '%s'", setAge.ReturnType)
+	}
+	if len(setAge.Params) != 1 {
+		t.Errorf("Expected 1 param, got %d", len(setAge.Params))
+	}
+	if len(setAge.Params) > 0 {
+		param := setAge.Params[0]
+		if param.Name != "age" {
+			t.Errorf("Expected param name 'age', got '%s'", param.Name)
+		}
+		if param.Type != "int" {
+			t.Errorf("Expected param type 'int', got '%s'", param.Type)
+		}
+		if param.IsNullable {
+			t.Errorf("Expected param to not be nullable")
+		}
+		if param.HasDefault {
+			t.Errorf("Expected param to not have default value")
+		}
+	}
+
+	getInfo := class.Methods[2]
+	if getInfo.Name != "getInfo" {
+		t.Errorf("Expected method name 'getInfo', got '%s'", getInfo.Name)
+	}
+	if getInfo.ReturnType != "string" {
+		t.Errorf("Expected return type 'string', got '%s'", getInfo.ReturnType)
+	}
+	if len(getInfo.Params) != 1 {
+		t.Errorf("Expected 1 param, got %d", len(getInfo.Params))
+	}
+	if len(getInfo.Params) > 0 {
+		param := getInfo.Params[0]
+		if param.Name != "prefix" {
+			t.Errorf("Expected param name 'prefix', got '%s'", param.Name)
+		}
+		if param.Type != "string" {
+			t.Errorf("Expected param type 'string', got '%s'", param.Type)
+		}
+		if !param.HasDefault {
+			t.Errorf("Expected param to have default value")
+		}
+		if param.DefaultValue != "User" {
+			t.Errorf("Expected default value 'User', got '%s'", param.DefaultValue)
+		}
+	}
+}
+
+func TestMethodParameterParsing(t *testing.T) {
+	tests := []struct {
+		name          string
+		paramStr      string
+		expectedParam Parameter
+		expectError   bool
+	}{
+		{
+			name:     "simple int parameter",
+			paramStr: "int $age",
+			expectedParam: Parameter{
+				Name:       "age",
+				Type:       "int",
+				IsNullable: false,
+				HasDefault: false,
+			},
+			expectError: false,
+		},
+		{
+			name:     "nullable string parameter",
+			paramStr: "?string $name",
+			expectedParam: Parameter{
+				Name:       "name",
+				Type:       "string",
+				IsNullable: true,
+				HasDefault: false,
+			},
+			expectError: false,
+		},
+		{
+			name:     "parameter with default value",
+			paramStr: "string $prefix = \"default\"",
+			expectedParam: Parameter{
+				Name:         "prefix",
+				Type:         "string",
+				IsNullable:   false,
+				HasDefault:   true,
+				DefaultValue: "default",
+			},
+			expectError: false,
+		},
+		{
+			name:     "nullable parameter with default null",
+			paramStr: "?int $count = null",
+			expectedParam: Parameter{
+				Name:         "count",
+				Type:         "int",
+				IsNullable:   true,
+				HasDefault:   true,
+				DefaultValue: "null",
+			},
+			expectError: false,
+		},
+		{
+			name:        "invalid parameter format",
+			paramStr:    "invalid",
+			expectError: true,
+		},
+	}
+
+	parser := ClassParser{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			param, err := parser.parseMethodParameter(tt.paramStr)
+
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("Expected error for parameter '%s', but got none", tt.paramStr)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("parseMethodParameter(%s) error = %v", tt.paramStr, err)
+				return
+			}
+
+			if param.Name != tt.expectedParam.Name {
+				t.Errorf("Expected name '%s', got '%s'", tt.expectedParam.Name, param.Name)
+			}
+			if param.Type != tt.expectedParam.Type {
+				t.Errorf("Expected type '%s', got '%s'", tt.expectedParam.Type, param.Type)
+			}
+			if param.IsNullable != tt.expectedParam.IsNullable {
+				t.Errorf("Expected IsNullable %v, got %v", tt.expectedParam.IsNullable, param.IsNullable)
+			}
+			if param.HasDefault != tt.expectedParam.HasDefault {
+				t.Errorf("Expected HasDefault %v, got %v", tt.expectedParam.HasDefault, param.HasDefault)
+			}
+			if param.DefaultValue != tt.expectedParam.DefaultValue {
+				t.Errorf("Expected DefaultValue '%s', got '%s'", tt.expectedParam.DefaultValue, param.DefaultValue)
 			}
 		})
 	}

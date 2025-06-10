@@ -115,10 +115,10 @@ func phpTypeToCType(phpType string) string {
 func phpTypeToCGOType(phpType string) string {
 	typeMap := map[string]string{
 		"void":   "void",
-		"string": "GoString",
-		"int":    "GoInt64",
-		"float":  "GoFloat64",
-		"bool":   "GoUint8", // CGO uses uint8 for bool
+		"string": "zend_string*",
+		"int":    "zend_long",
+		"float":  "float",
+		"bool":   "bool",    // CGO uses uint8 for bool
 		"array":  "GoSlice", // Arrays become slices in Go
 		"mixed":  "GoInterface",
 	}

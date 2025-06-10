@@ -36,10 +36,7 @@ func (gg *GoFileGenerator) buildContent() (string, error) {
 #include "%s.h"
 */
 import "C"
-import (
-	"sync"
-	"unsafe"
-)
+import "sync"
 `, cleanPackageName, gg.generator.BaseName))
 
 	for _, imp := range imports {
@@ -125,16 +122,16 @@ func create_%s_object() uint64 {
 }
 
 `, class.GoStruct, class.GoStruct, class.GoStruct))
-
-		// Generate property getters and setters
 		for _, prop := range class.Properties {
-			// Getter
 			builder.WriteString(fmt.Sprintf("//export get_%s_%s_property\n", class.Name, prop.Name))
 			if prop.GoType == "string" {
-				builder.WriteString(fmt.Sprintf(`func get_%s_%s_property(objectID uint64) string {
+				builder.WriteString(fmt.Sprintf(`func get_%s_%s_property(objectID uint64) unsafe.Pointer {
 	objPtr := getGoObject(objectID)
+	if objPtr == nil {
+		return nil
+	}
 	obj := (*%s)(objPtr)
-	return obj.%s
+	return frankenphp.PHPString(obj.%s, false)
 }
 
 `, class.Name, prop.Name, class.GoStruct, prop.Name))
@@ -142,6 +139,10 @@ func create_%s_object() uint64 {
 				goReturnType := gg.phpTypeToGoType(prop.Type)
 				builder.WriteString(fmt.Sprintf(`func get_%s_%s_property(objectID uint64) %s {
 	objPtr := getGoObject(objectID)
+	if objPtr == nil {
+		var zero %s
+		return zero
+	}
 	obj := (*%s)(objPtr)
 	return obj.%s
 }
@@ -149,19 +150,33 @@ func create_%s_object() uint64 {
 `, class.Name, prop.Name, goReturnType, goReturnType, class.GoStruct, prop.Name))
 			}
 
-			// Setter
 			builder.WriteString(fmt.Sprintf("//export set_%s_%s_property\n", class.Name, prop.Name))
-			goType := gg.phpTypeToGoType(prop.Type)
-			builder.WriteString(fmt.Sprintf(`func set_%s_%s_property(objectID uint64, value %s) {
+			if prop.GoType == "string" {
+				builder.WriteString(fmt.Sprintf(`func set_%s_%s_property(objectID uint64, value *C.zend_string) {
 	objPtr := getGoObject(objectID)
+	if objPtr == nil {
+		return
+	}
+	obj := (*%s)(objPtr)
+	obj.%s = frankenphp.GoString(unsafe.Pointer(value))
+}
+
+`, class.Name, prop.Name, class.GoStruct, prop.Name))
+			} else {
+				goType := gg.phpTypeToGoType(prop.Type)
+				builder.WriteString(fmt.Sprintf(`func set_%s_%s_property(objectID uint64, value %s) {
+	objPtr := getGoObject(objectID)
+	if objPtr == nil {
+		return
+	}
 	obj := (*%s)(objPtr)
 	obj.%s = value
 }
 
 `, class.Name, prop.Name, goType, class.GoStruct, prop.Name))
+			}
 		}
 
-		// Generate original methods from the source
 		for _, method := range class.Methods {
 			if method.GoFunction != "" {
 				builder.WriteString(method.GoFunction)
@@ -169,7 +184,6 @@ func create_%s_object() uint64 {
 			}
 		}
 
-		// Generate method wrappers
 		for _, method := range class.Methods {
 			builder.WriteString(fmt.Sprintf("//export %s_wrapper\n", method.Name))
 			builder.WriteString(gg.generateMethodWrapper(method, class))
@@ -185,7 +199,6 @@ func (gg *GoFileGenerator) generateMethodWrapper(method ClassMethod, class PHPCl
 
 	builder.WriteString(fmt.Sprintf("func %s_wrapper(objectID uint64", method.Name))
 
-	// Use C types for parameters to match what the C template passes
 	for _, param := range method.Params {
 		if param.Type == "string" {
 			builder.WriteString(fmt.Sprintf(", %s *C.zend_string", param.Name))
@@ -196,13 +209,29 @@ func (gg *GoFileGenerator) generateMethodWrapper(method ClassMethod, class PHPCl
 	}
 
 	if method.ReturnType != "void" {
-		goReturnType := gg.phpTypeToGoType(method.ReturnType)
-		builder.WriteString(fmt.Sprintf(") %s {\n", goReturnType))
+		if method.ReturnType == "string" {
+			builder.WriteString(") unsafe.Pointer {\n")
+		} else {
+			goReturnType := gg.phpTypeToGoType(method.ReturnType)
+			builder.WriteString(fmt.Sprintf(") %s {\n", goReturnType))
+		}
 	} else {
 		builder.WriteString(") {\n")
 	}
 
 	builder.WriteString("	objPtr := getGoObject(objectID)\n")
+	builder.WriteString("	if objPtr == nil {\n")
+	if method.ReturnType != "void" {
+		if method.ReturnType == "string" {
+			builder.WriteString("		return nil\n")
+		} else {
+			builder.WriteString(fmt.Sprintf("		var zero %s\n", gg.phpTypeToGoType(method.ReturnType)))
+			builder.WriteString("		return zero\n")
+		}
+	} else {
+		builder.WriteString("		return\n")
+	}
+	builder.WriteString("	}\n")
 	builder.WriteString(fmt.Sprintf("	obj := (*%s)(objPtr)\n", class.GoStruct))
 
 	builder.WriteString("	")
@@ -216,11 +245,8 @@ func (gg *GoFileGenerator) generateMethodWrapper(method ClassMethod, class PHPCl
 		if i > 0 {
 			builder.WriteString(", ")
 		}
-		if param.Type == "string" {
-			builder.WriteString(fmt.Sprintf("C.GoStringN(C.ZSTR_VAL(%s), C.int(C.ZSTR_LEN(%s)))", param.Name, param.Name))
-		} else {
-			builder.WriteString(param.Name)
-		}
+
+		builder.WriteString(param.Name)
 	}
 
 	builder.WriteString(")\n")
@@ -363,7 +389,7 @@ func (gg *GoFileGenerator) generateMethodWrapperFallback(method ClassMethod, cla
 func (gg *GoFileGenerator) phpTypeToGoType(phpType string) string {
 	typeMap := map[string]string{
 		"string": "string",
-		"int":    "int",
+		"int":    "int64",
 		"float":  "float64",
 		"bool":   "bool",
 		"array":  "[]interface{}",

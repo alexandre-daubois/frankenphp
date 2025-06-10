@@ -36,7 +36,10 @@ func (gg *GoFileGenerator) buildContent() (string, error) {
 #include "%s.h"
 */
 import "C"
-import "sync"
+import (
+	"runtime/cgo"
+	"unsafe"
+)
 `, cleanPackageName, gg.generator.BaseName))
 
 	for _, imp := range imports {
@@ -65,7 +68,6 @@ import "sync"
 		builder.WriteString(fmt.Sprintf("//export %s\n%s\n", fn.Name, fn.GoFunction))
 	}
 
-	// Generate struct declarations for classes
 	for _, class := range gg.generator.Classes {
 		builder.WriteString(fmt.Sprintf("type %s struct {\n", class.GoStruct))
 		for _, prop := range class.Properties {
@@ -74,41 +76,24 @@ import "sync"
 		builder.WriteString("}\n\n")
 	}
 
-	// Generate object registry if we have classes
 	if len(gg.generator.Classes) > 0 {
 		builder.WriteString(`
-var objectRegistry = make(map[uint64]interface{})
-var nextObjectID uint64 = 1
-var registryMutex sync.RWMutex
-
 //export registerGoObject
-func registerGoObject(obj unsafe.Pointer) uint64 {
-	registryMutex.Lock()
-	defer registryMutex.Unlock()
-	
-	id := nextObjectID
-	nextObjectID++
-	objectRegistry[id] = obj
-	return id
+func registerGoObject(obj interface{}) C.uintptr_t {
+	handle := cgo.NewHandle(obj)
+	return C.uintptr_t(handle)
 }
 
 //export getGoObject
-func getGoObject(id uint64) unsafe.Pointer {
-	registryMutex.RLock()
-	defer registryMutex.RUnlock()
-	
-	if obj, exists := objectRegistry[id]; exists {
-		return obj.(unsafe.Pointer)
-	}
-	return nil
+func getGoObject(handle C.uintptr_t) interface{} {
+	h := cgo.Handle(handle)
+	return h.Value()
 }
 
 //export removeGoObject
-func removeGoObject(id uint64) {
-	registryMutex.Lock()
-	defer registryMutex.Unlock()
-	
-	delete(objectRegistry, id)
+func removeGoObject(handle C.uintptr_t) {
+	h := cgo.Handle(handle)
+	h.Delete()
 }
 
 `)
@@ -116,35 +101,35 @@ func removeGoObject(id uint64) {
 
 	for _, class := range gg.generator.Classes {
 		builder.WriteString(fmt.Sprintf(`//export create_%s_object
-func create_%s_object() uint64 {
+func create_%s_object() C.uintptr_t {
 	obj := &%s{}
-	return registerGoObject(unsafe.Pointer(obj))
+	return registerGoObject(obj)
 }
 
 `, class.GoStruct, class.GoStruct, class.GoStruct))
 		for _, prop := range class.Properties {
 			builder.WriteString(fmt.Sprintf("//export get_%s_%s_property\n", class.Name, prop.Name))
 			if prop.GoType == "string" {
-				builder.WriteString(fmt.Sprintf(`func get_%s_%s_property(objectID uint64) unsafe.Pointer {
-	objPtr := getGoObject(objectID)
-	if objPtr == nil {
+				builder.WriteString(fmt.Sprintf(`func get_%s_%s_property(handle C.uintptr_t) unsafe.Pointer {
+	obj := getGoObject(handle)
+	if obj == nil {
 		return nil
 	}
-	obj := (*%s)(objPtr)
-	return frankenphp.PHPString(obj.%s, false)
+	structObj := obj.(*%s)
+	return frankenphp.PHPString(structObj.%s, false)
 }
 
 `, class.Name, prop.Name, class.GoStruct, prop.Name))
 			} else {
 				goReturnType := gg.phpTypeToGoType(prop.Type)
-				builder.WriteString(fmt.Sprintf(`func get_%s_%s_property(objectID uint64) %s {
-	objPtr := getGoObject(objectID)
-	if objPtr == nil {
+				builder.WriteString(fmt.Sprintf(`func get_%s_%s_property(handle C.uintptr_t) %s {
+	obj := getGoObject(handle)
+	if obj == nil {
 		var zero %s
 		return zero
 	}
-	obj := (*%s)(objPtr)
-	return obj.%s
+	structObj := obj.(*%s)
+	return structObj.%s
 }
 
 `, class.Name, prop.Name, goReturnType, goReturnType, class.GoStruct, prop.Name))
@@ -152,25 +137,25 @@ func create_%s_object() uint64 {
 
 			builder.WriteString(fmt.Sprintf("//export set_%s_%s_property\n", class.Name, prop.Name))
 			if prop.GoType == "string" {
-				builder.WriteString(fmt.Sprintf(`func set_%s_%s_property(objectID uint64, value *C.zend_string) {
-	objPtr := getGoObject(objectID)
-	if objPtr == nil {
+				builder.WriteString(fmt.Sprintf(`func set_%s_%s_property(handle C.uintptr_t, value *C.zend_string) {
+	obj := getGoObject(handle)
+	if obj == nil {
 		return
 	}
-	obj := (*%s)(objPtr)
-	obj.%s = frankenphp.GoString(unsafe.Pointer(value))
+	structObj := obj.(*%s)
+	structObj.%s = frankenphp.GoString(unsafe.Pointer(value))
 }
 
 `, class.Name, prop.Name, class.GoStruct, prop.Name))
 			} else {
 				goType := gg.phpTypeToGoType(prop.Type)
-				builder.WriteString(fmt.Sprintf(`func set_%s_%s_property(objectID uint64, value %s) {
-	objPtr := getGoObject(objectID)
-	if objPtr == nil {
+				builder.WriteString(fmt.Sprintf(`func set_%s_%s_property(handle C.uintptr_t, value %s) {
+	obj := getGoObject(handle)
+	if obj == nil {
 		return
 	}
-	obj := (*%s)(objPtr)
-	obj.%s = value
+	structObj := obj.(*%s)
+	structObj.%s = value
 }
 
 `, class.Name, prop.Name, goType, class.GoStruct, prop.Name))
@@ -197,7 +182,7 @@ func create_%s_object() uint64 {
 func (gg *GoFileGenerator) generateMethodWrapper(method ClassMethod, class PHPClass) string {
 	var builder strings.Builder
 
-	builder.WriteString(fmt.Sprintf("func %s_wrapper(objectID uint64", method.Name))
+	builder.WriteString(fmt.Sprintf("func %s_wrapper(handle C.uintptr_t", method.Name))
 
 	for _, param := range method.Params {
 		if param.Type == "string" {
@@ -219,8 +204,8 @@ func (gg *GoFileGenerator) generateMethodWrapper(method ClassMethod, class PHPCl
 		builder.WriteString(") {\n")
 	}
 
-	builder.WriteString("	objPtr := getGoObject(objectID)\n")
-	builder.WriteString("	if objPtr == nil {\n")
+	builder.WriteString("	obj := getGoObject(handle)\n")
+	builder.WriteString("	if obj == nil {\n")
 	if method.ReturnType != "void" {
 		if method.ReturnType == "string" {
 			builder.WriteString("		return nil\n")
@@ -232,14 +217,14 @@ func (gg *GoFileGenerator) generateMethodWrapper(method ClassMethod, class PHPCl
 		builder.WriteString("		return\n")
 	}
 	builder.WriteString("	}\n")
-	builder.WriteString(fmt.Sprintf("	obj := (*%s)(objPtr)\n", class.GoStruct))
+	builder.WriteString(fmt.Sprintf("	structObj := obj.(*%s)\n", class.GoStruct))
 
 	builder.WriteString("	")
 	if method.ReturnType != "void" {
 		builder.WriteString("return ")
 	}
 
-	builder.WriteString(fmt.Sprintf("obj.%s(", gg.goMethodName(method.Name)))
+	builder.WriteString(fmt.Sprintf("structObj.%s(", gg.goMethodName(method.Name)))
 
 	for i, param := range method.Params {
 		if i > 0 {
@@ -267,8 +252,6 @@ type GoParameter struct {
 }
 
 func (gg *GoFileGenerator) parseGoMethodSignature(goFunction string) (*GoMethodSignature, error) {
-	// Simple parsing of Go function signature
-	// Example: "func (mc *MyClass) SetVersion(version string) {"
 	lines := strings.Split(goFunction, "\n")
 	if len(lines) == 0 {
 		return nil, fmt.Errorf("empty function")
@@ -276,21 +259,17 @@ func (gg *GoFileGenerator) parseGoMethodSignature(goFunction string) (*GoMethodS
 
 	funcLine := strings.TrimSpace(lines[0])
 
-	// Extract method name and parameters
 	if !strings.HasPrefix(funcLine, "func ") {
 		return nil, fmt.Errorf("not a function")
 	}
 
-	// Find the method name
 	parts := strings.Split(funcLine, ")")
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("invalid function signature")
 	}
 
-	// Get the part after the receiver
 	methodPart := strings.TrimSpace(parts[1])
 
-	// Extract method name
 	spaceIndex := strings.Index(methodPart, "(")
 	if spaceIndex == -1 {
 		return nil, fmt.Errorf("no parameters found")
@@ -298,7 +277,6 @@ func (gg *GoFileGenerator) parseGoMethodSignature(goFunction string) (*GoMethodS
 
 	methodName := strings.TrimSpace(methodPart[:spaceIndex])
 
-	// Extract parameters
 	paramStart := strings.Index(methodPart, "(")
 	paramEnd := strings.LastIndex(methodPart, ")")
 	if paramStart == -1 || paramEnd == -1 || paramStart >= paramEnd {
@@ -316,7 +294,6 @@ func (gg *GoFileGenerator) parseGoMethodSignature(goFunction string) (*GoMethodS
 				continue
 			}
 
-			// Parse "name type" format
 			parts := strings.Fields(paramPart)
 			if len(parts) >= 2 {
 				params = append(params, GoParameter{
@@ -327,7 +304,6 @@ func (gg *GoFileGenerator) parseGoMethodSignature(goFunction string) (*GoMethodS
 		}
 	}
 
-	// Extract return type
 	returnType := ""
 	if strings.Contains(methodPart, ") ") && !strings.HasSuffix(methodPart, ") {") {
 		afterParen := strings.Split(methodPart, ") ")
@@ -371,7 +347,7 @@ func (gg *GoFileGenerator) generateMethodWrapperFallback(method ClassMethod, cla
 		builder.WriteString("return ")
 	}
 
-	builder.WriteString(fmt.Sprintf("obj.%s(", gg.goMethodName(method.Name)))
+	builder.WriteString(fmt.Sprintf("structObj.%s(", gg.goMethodName(method.Name)))
 
 	for i, param := range method.Params {
 		if i > 0 {

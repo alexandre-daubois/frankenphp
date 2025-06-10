@@ -13,7 +13,7 @@ static int (*original_php_register_internal_extensions_func)(void) = NULL;
 static zend_object_handlers object_handlers_{{.BaseName}};
 
 typedef struct {
-    uint64_t go_object_id;
+    uintptr_t go_handle;
     char* class_name;
     zend_object std; /* This MUST be the last struct field to memory alignement problems */
 } {{.BaseName}}_object;
@@ -29,7 +29,7 @@ static zend_object *{{.BaseName}}_create_object(zend_class_entry *ce) {
     object_properties_init(&intern->std, ce);
     
     intern->std.handlers = &object_handlers_{{.BaseName}};
-    intern->go_object_id = 0; /* will be set in __construct */
+    intern->go_handle = 0; /* will be set in __construct */
     intern->class_name = estrdup(ZSTR_VAL(ce->name));
     
     return &intern->std;
@@ -42,8 +42,8 @@ static void {{.BaseName}}_free_object(zend_object *object) {
         efree(intern->class_name);
     }
     
-    if (intern->go_object_id != 0) {
-        removeGoObject(intern->go_object_id);
+    if (intern->go_handle != 0) {
+        removeGoObject(intern->go_handle);
     }
     
     zend_object_std_dtor(&intern->std);
@@ -52,7 +52,7 @@ static void {{.BaseName}}_free_object(zend_object *object) {
 static zval *{{.BaseName}}_read_property(zend_object *object, zend_string *member, int type, void **cache_slot, zval *rv) {
     {{.BaseName}}_object *intern = {{.BaseName}}_object_from_obj(object);
     
-    if (intern->go_object_id == 0) {
+    if (intern->go_handle == 0) {
         return zend_std_read_property(object, member, type, cache_slot, rv);
     }
     
@@ -63,19 +63,19 @@ static zval *{{.BaseName}}_read_property(zend_object *object, zend_string *membe
         {{range $class.Properties}}
         if (strcmp(prop_name, "{{.Name | ToLower}}") == 0) {
             {{if eq .Type "string"}}
-            zend_string* result = get_{{$class.Name}}_{{.Name}}_property(intern->go_object_id);
+            zend_string* result = get_{{$class.Name}}_{{.Name}}_property(intern->go_handle);
             ZVAL_STR(rv, result);
             return rv;
             {{else if eq .Type "int"}}
-            zend_long result = get_{{$class.Name}}_{{.Name}}_property(intern->go_object_id);
+            zend_long result = get_{{$class.Name}}_{{.Name}}_property(intern->go_handle);
             ZVAL_LONG(rv, result);
             return rv;
             {{else if eq .Type "float"}}
-            float result = get_{{$class.Name}}_{{.Name}}_property(intern->go_object_id);
+            float result = get_{{$class.Name}}_{{.Name}}_property(intern->go_handle);
             ZVAL_DOUBLE(rv, result);
             return rv;
             {{else if eq .Type "bool"}}
-            bool result = get_{{$class.Name}}_{{.Name}}_property(intern->go_object_id);
+            bool result = get_{{$class.Name}}_{{.Name}}_property(intern->go_handle);
             ZVAL_BOOL(rv, result);
             return rv;
             {{end}}
@@ -90,7 +90,7 @@ static zval *{{.BaseName}}_read_property(zend_object *object, zend_string *membe
 static zval *{{.BaseName}}_write_property(zend_object *object, zend_string *member, zval *value, void **cache_slot) {
     {{.BaseName}}_object *intern = {{.BaseName}}_object_from_obj(object);
     
-    if (intern->go_object_id == 0) {
+    if (intern->go_handle == 0) {
         return zend_std_write_property(object, member, value, cache_slot);
     }
     
@@ -102,19 +102,19 @@ static zval *{{.BaseName}}_write_property(zend_object *object, zend_string *memb
         if (strcmp(prop_name, "{{.Name | ToLower}}") == 0) {
             {{if eq .Type "string"}}
             if (Z_TYPE_P(value) == IS_STRING) {
-                set_{{$class.Name}}_{{.Name}}_property(intern->go_object_id, Z_STR_P(value));
+                set_{{$class.Name}}_{{.Name}}_property(intern->go_handle, Z_STR_P(value));
             }
             {{else if eq .Type "int"}}
             if (Z_TYPE_P(value) == IS_LONG) {
-                set_{{$class.Name}}_{{.Name}}_property(intern->go_object_id, value);
+                set_{{$class.Name}}_{{.Name}}_property(intern->go_handle, value);
             }
             {{else if eq .Type "float"}}
             if (Z_TYPE_P(value) == IS_DOUBLE) {
-                set_{{$class.Name}}_{{.Name}}_property(intern->go_object_id, value);
+                set_{{$class.Name}}_{{.Name}}_property(intern->go_handle, value);
             }
             {{else if eq .Type "bool"}}
             if (Z_TYPE_P(value) == IS_TRUE || Z_TYPE_P(value) == IS_FALSE) {
-                set_{{$class.Name}}_{{.Name}}_property(intern->go_object_id, (zend_long)(Z_TYPE_P(value) == IS_TRUE ? 1 : 0));
+                set_{{$class.Name}}_{{.Name}}_property(intern->go_handle, (zend_long)(Z_TYPE_P(value) == IS_TRUE ? 1 : 0));
             }
             {{end}}
             return value;
@@ -130,7 +130,7 @@ static HashTable *{{.BaseName}}_get_properties(zend_object *object) {
     {{.BaseName}}_object *intern = {{.BaseName}}_object_from_obj(object);
     HashTable *props = zend_std_get_properties(object);
     
-    if (intern->go_object_id == 0) {
+    if (intern->go_handle == 0) {
         return props;
     }
     
@@ -139,16 +139,16 @@ static HashTable *{{.BaseName}}_get_properties(zend_object *object) {
         {{range $class.Properties}}
         zval property_value_{{.Name}};
         {{if eq .Type "string"}}
-        zend_string* result_{{.Name}} = get_{{$class.Name}}_{{.Name}}_property(intern->go_object_id);
+        zend_string* result_{{.Name}} = get_{{$class.Name}}_{{.Name}}_property(intern->go_handle);
         ZVAL_STR(&property_value_{{.Name}}, result_{{.Name}});
         {{else if eq .Type "int"}}
-        zend_long result_{{.Name}} = get_{{$class.Name}}_{{.Name}}_property(intern->go_object_id);
+        zend_long result_{{.Name}} = get_{{$class.Name}}_{{.Name}}_property(intern->go_handle);
         ZVAL_LONG(&property_value_{{.Name}}, result_{{.Name}});
         {{else if eq .Type "float"}}
-        float result_{{.Name}} = get_{{$class.Name}}_{{.Name}}_property(intern->go_object_id);
+        float result_{{.Name}} = get_{{$class.Name}}_{{.Name}}_property(intern->go_handle);
         ZVAL_DOUBLE(&property_value_{{.Name}}, result_{{.Name}});
         {{else if eq .Type "bool"}}
-        bool result_{{.Name}} = get_{{$class.Name}}_{{.Name}}_property(intern->go_object_id);
+        bool result_{{.Name}} = get_{{$class.Name}}_{{.Name}}_property(intern->go_handle);
         ZVAL_BOOL(&property_value_{{.Name}}, result_{{.Name}});
         {{end}}
         zend_hash_str_update(props, "{{.Name | ToLower}}", sizeof("{{.Name | ToLower}}") - 1, &property_value_{{.Name}});
@@ -192,14 +192,14 @@ PHP_METHOD({{.Name}}, __construct) {
     
     {{$.BaseName}}_object *intern = {{$.BaseName}}_object_from_obj(Z_OBJ_P(ZEND_THIS));
     
-    intern->go_object_id = create_{{.GoStruct}}_object();
+    intern->go_handle = create_{{.GoStruct}}_object();
 }
 
 {{range .Methods}}
 PHP_METHOD({{.ClassName}}, {{.PHPName}}) {
     {{$.BaseName}}_object *intern = {{$.BaseName}}_object_from_obj(Z_OBJ_P(ZEND_THIS));
     
-    if (intern->go_object_id == 0) {
+    if (intern->go_handle == 0) {
         zend_throw_error(NULL, "Go object not found in registry");
         RETURN_THROWS();
     }
@@ -219,20 +219,20 @@ PHP_METHOD({{.ClassName}}, {{.PHPName}}) {
     
     {{if ne .ReturnType "void"}}
     {{if eq .ReturnType "string"}}
-    zend_string* result = {{.Name}}_wrapper(intern->go_object_id{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
+    zend_string* result = {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
     RETURN_STR(result);
     {{else if eq .ReturnType "int"}}
-    zend_long result = {{.Name}}_wrapper(intern->go_object_id{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
+    zend_long result = {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
     RETURN_LONG(result);
     {{else if eq .ReturnType "float"}}
-    float result = {{.Name}}_wrapper(intern->go_object_id{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
+    float result = {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
     RETURN_DOUBLE(result);
     {{else if eq .ReturnType "bool"}}
-    bool result = {{.Name}}_wrapper(intern->go_object_id{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
+    bool result = {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
     RETURN_BOOL(result);
     {{end}}
     {{else}}
-    {{.Name}}_wrapper(intern->go_object_id{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
+    {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
     {{end}}
 }
 {{end}}

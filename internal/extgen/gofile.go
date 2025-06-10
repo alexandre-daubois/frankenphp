@@ -48,6 +48,14 @@ import "C"
 
 	builder.WriteString("\nfunc init() {\n\tC.register_extension()\n}\n\n") // TODO update with the new frankenphp func!
 
+	for _, constant := range gg.generator.Constants {
+		builder.WriteString(fmt.Sprintf("const %s = %s\n", constant.Name, constant.Value))
+	}
+
+	if len(gg.generator.Constants) > 0 {
+		builder.WriteString("\n")
+	}
+
 	for _, internalFunc := range internalFunctions {
 		builder.WriteString(internalFunc + "\n\n")
 	}

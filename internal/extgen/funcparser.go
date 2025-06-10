@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-var phpFuncRegex = regexp.MustCompile(`//\s*export_php:?\s*function\s+([^{}\n]+)(?:\s*{\s*})?`)
+var phpFuncRegex = regexp.MustCompile(`//\s*export_php:function\s+([^{}\n]+)(?:\s*{\s*})?`)
 var signatureRegex = regexp.MustCompile(`(\w+)\s*\(([^)]*)\)\s*:\s*(\??[\w|]+)`)
 var typeNameRegex = regexp.MustCompile(`(\??[\w|]+)\s+\$?(\w+)`)
 

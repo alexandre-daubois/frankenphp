@@ -19,6 +19,7 @@ type CTemplateData struct {
 	BaseName  string
 	Functions []PHPFunction
 	Classes   []PHPClass
+	Constants []PHPConstant
 	Version   string
 }
 
@@ -58,6 +59,7 @@ func (cg *CFileGenerator) getTemplateContent() (string, error) {
 		BaseName:  cg.generator.BaseName,
 		Functions: cg.generator.Functions,
 		Classes:   cg.generator.Classes,
+		Constants: cg.generator.Constants,
 		Version:   "1.0.0",
 	}
 

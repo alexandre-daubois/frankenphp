@@ -13,6 +13,7 @@ type Generator struct {
 	BuildDir   string
 	Functions  []PHPFunction
 	Classes    []PHPClass
+	Constants  []PHPConstant
 }
 
 // EXPERIMENTAL
@@ -24,8 +25,8 @@ func (g *Generator) Generate() error {
 		return fmt.Errorf("parse source: %w", err)
 	}
 
-	if len(g.Functions) == 0 && len(g.Classes) == 0 {
-		return fmt.Errorf("no PHP functions or classes found in source file")
+	if len(g.Functions) == 0 && len(g.Classes) == 0 && len(g.Constants) == 0 {
+		return fmt.Errorf("no PHP functions, classes, or constants found in source file")
 	}
 
 	generators := []struct {
@@ -70,6 +71,12 @@ func (g *Generator) parseSource() error {
 		return fmt.Errorf("parsing classes: %w", err)
 	}
 	g.Classes = classes
+
+	constants, err := parser.ParseConstants(g.SourceFile)
+	if err != nil {
+		return fmt.Errorf("parsing constants: %w", err)
+	}
+	g.Constants = constants
 
 	return nil
 }

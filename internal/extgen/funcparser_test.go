@@ -15,7 +15,7 @@ func TestFunctionParser(t *testing.T) {
 			name: "single function",
 			input: `package main
 
-//export_php function testFunc(string $name): string
+//export_php:function testFunc(string $name): string
 func testFunc(name *go_string) *go_value {
 	return String("Hello " + CStringToGoString(name))
 }`,
@@ -25,12 +25,12 @@ func testFunc(name *go_string) *go_value {
 			name: "multiple functions",
 			input: `package main
 
-//export_php function func1(int $a): int
+//export_php:function func1(int $a): int
 func func1(a long) *go_value {
 	return Int(a * 2)
 }
 
-//export_php function func2(string $b): string  
+//export_php:function func2(string $b): string  
 func func2(b *go_string) *go_value {
 	return String("processed: " + CStringToGoString(b))
 }`,
@@ -49,7 +49,7 @@ func regularFunc() {
 			name: "mixed functions",
 			input: `package main
 
-//export_php function phpFunc(string $data): string
+//export_php:function phpFunc(string $data): string
 func phpFunc(data *go_string) *go_value {
 	return String("PHP: " + CStringToGoString(data))
 }
@@ -58,7 +58,7 @@ func internalFunc() {
 	// Internal function without export_php comment
 }
 
-//export_php function anotherPhpFunc(int $num): int
+//export_php:function anotherPhpFunc(int $num): int
 func anotherPhpFunc(num long) *go_value {
 	return Int(num * 10)
 }`,
@@ -78,12 +78,12 @@ func phpFunc(data *go_string) *go_value {
 			name: "decoupled function names",
 			input: `package main
 
-//export_php function my_php_function(string $name): string
+//export_php:function my_php_function(string $name): string
 func myGoFunction(name *go_string) *go_value {
 	return String("Hello " + CStringToGoString(name))
 }
 
-//export_php function another_php_func(int $num): int
+//export_php:function another_php_func(int $num): int
 func someOtherGoName(num long) *go_value {
 	return Int(num * 5)
 }`,

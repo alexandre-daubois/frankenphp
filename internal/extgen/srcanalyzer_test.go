@@ -28,7 +28,7 @@ func regularFunction() {
 	fmt.Println("hello")
 }
 
-// export_php
+//export_php:function
 func exportedFunction() string {
 	return "exported"
 }`,
@@ -66,7 +66,7 @@ func internalOne() {
 }
 
 // This function is exported to PHP
-// export_php
+//export_php:function
 func exportedOne() int {
 	return 42
 }
@@ -76,7 +76,7 @@ func internalTwo() string {
 }
 
 // Another exported function
-// export_php  
+//export_php:function  
 func exportedTwo() bool {
 	return true
 }`,
@@ -105,7 +105,7 @@ func complexFunction() {
 	}
 }
 
-// export_php
+//export_php:function
 func exportedComplex() {
 	obj := struct{
 		field string
@@ -139,10 +139,10 @@ func exportedComplex() {
 			name: "file with only exported functions",
 			sourceContent: `package main
 
-// export_php
+//export_php:function
 func onlyExported() {}
 
-// export_php
+//export_php:function
 func anotherExported() string {
 	return "test"
 }`,
@@ -154,17 +154,17 @@ func anotherExported() string {
 			name: "file with export comment not immediately before function",
 			sourceContent: `package main
 
-// export_php
+//export_php:function
 // Some other comment
 func shouldNotBeExported() {}
 
 func normalFunction() {
-	// export_php inside function should not count
+	//export_php:function inside function should not count
 }`,
 			expectedImports: []string{},
 			expectedFunctions: []string{
 				`func normalFunction() {
-	// export_php inside function should not count
+	//export_php:function inside function should not count
 }`,
 			},
 			expectError: false,
@@ -266,7 +266,7 @@ func TestSourceAnalyzer_ExtractInternalFunctions(t *testing.T) {
 		},
 		{
 			name: "function with export comment",
-			content: `// export_php
+			content: `//export_php:function
 func exported() {}`,
 			expected: []string{},
 		},
@@ -274,7 +274,7 @@ func exported() {}`,
 			name: "mixed functions",
 			content: `func internal() {}
 
-// export_php
+//export_php:function
 func exported() {}
 
 func anotherInternal() {
@@ -289,13 +289,13 @@ func anotherInternal() {
 		},
 		{
 			name: "export comment with spacing",
-			content: `//export_php
+			content: `//export_php:function
 func exported1() {}
 
-// export_php comment
+//export_php:function
 func exported2() {}
 
-//   export_php   
+// export_php:function   
 func exported3() {}`,
 			expected: []string{},
 		},
@@ -378,7 +378,7 @@ func internalOne() {
 	fmt.Println("test")
 }
 
-// export_php
+//export_php:function
 func exported() string {
 	return "exported"
 }
@@ -413,7 +413,7 @@ func internalTwo() {
 func BenchmarkSourceAnalyzer_ExtractInternalFunctions(b *testing.B) {
 	content := `func test1() { fmt.Println("1") }
 func test2() { fmt.Println("2") }
-// export_php
+//export_php:function
 func exported() {}
 func test3() { 
 	for i := 0; i < 10; i++ {

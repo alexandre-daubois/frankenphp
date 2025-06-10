@@ -1,5 +1,10 @@
 package extgen
 
+import (
+	"strconv"
+	"strings"
+)
+
 type PHPFunction struct {
 	Name             string
 	Signature        string
@@ -29,4 +34,27 @@ type ClassProperty struct {
 	Type       string
 	GoType     string
 	IsNullable bool
+}
+
+type PHPConstant struct {
+	Name       string
+	Value      string
+	Type       string // "int", "string", "bool", "float"
+	IsIota     bool
+	LineNumber int
+}
+
+// CValue returns the constant value in C-compatible format
+func (c PHPConstant) CValue() string {
+	if c.Type != "int" {
+		return c.Value
+	}
+
+	if strings.HasPrefix(c.Value, "0o") {
+		if val, err := strconv.ParseInt(c.Value, 0, 64); err == nil {
+			return strconv.FormatInt(val, 10)
+		}
+	}
+
+	return c.Value
 }

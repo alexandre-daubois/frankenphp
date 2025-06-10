@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-var phpClassRegex = regexp.MustCompile(`//\s*export_php:?\s*class\s+(\w+)`)
+var phpClassRegex = regexp.MustCompile(`//\s*export_php:class\s+(\w+)`)
 
 type ExportDirective struct {
 	Line      int

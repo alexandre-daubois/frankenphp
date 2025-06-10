@@ -13,3 +13,9 @@ func (p *SourceParser) ParseClasses(filename string) ([]PHPClass, error) {
 	classParser := ClassParser{}
 	return classParser.parse(filename)
 }
+
+// EXPERIMENTAL
+func (p *SourceParser) ParseConstants(filename string) ([]PHPConstant, error) {
+	constantParser := NewConstantParserWithDefRegex()
+	return constantParser.parse(filename)
+}

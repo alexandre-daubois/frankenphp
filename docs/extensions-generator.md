@@ -47,8 +47,8 @@ import (
     "strings"
 )
 
-//export_php function repeat_this(string $str, int $count, bool $reverse): string
-func RepeatThis(s *C.zend_string, count int64, reverse bool) unsafe.Pointer {
+//export_php:function repeat_this(string $str, int $count, bool $reverse): string
+func repeat_this(s *C.zend_string, count int64, reverse bool) unsafe.Pointer {
     str := frankenphp.GoString(unsafe.Pointer(s))
 
     result := strings.Repeat(str, int(count))
@@ -66,8 +66,7 @@ func RepeatThis(s *C.zend_string, count int64, reverse bool) unsafe.Pointer {
 
 There are two important things to note here:
 
-* A directive comment `//export_php` defines the function signature in PHP. This is how the generator knows how to
-  generate the PHP function with the right parameters and return type. The Go function name doesn't need to match the name of the exported function;
+* A directive comment `//export_php:function` defines the function signature in PHP. This is how the generator knows how to generate the PHP function with the right parameters and return type;
 * The function must return an `unsafe.Pointer`. FrankenPHP provides an API to help you with type juggling between C and
   Go.
 
@@ -97,13 +96,78 @@ If you refer to the code snippet of the previous section, you can see that helpe
 parameter and the return value. The second and third parameter of our `repeat_this()` function don't need to be
 converted as memory representation of the underlying types are the same for both C and Go.
 
+## Declaring Constants
+
+The generator supports exporting Go constants to PHP using the `//export_php:const` directive. This allows you to
+share configuration values, status codes, and other constants between Go and PHP code:
+
+```go
+//export_php:const
+const MAX_CONNECTIONS = 100
+
+//export_php:const
+const API_VERSION = "1.2.3"
+
+//export_php:const
+const STATUS_OK = iota
+
+//export_php:const
+const STATUS_ERROR = iota
+```
+
+The directive supports various value types including strings, integers, booleans, floats, and iota constants. When
+using `iota`, the generator automatically assigns sequential values (0, 1, 2, etc.). These constants become available
+in your PHP code as global constants. When using integers, different possible notation (binary, hex, octal) are supported
+and dumped as is in the PHP stub file.
+
+You can use constants just like you are used to in the Go code. For example, let's take the `repeat_this()` function
+we declared earlier and change the last argument to an integer:
+
+```go
+import (
+    "C"
+    "github.com/dunglas/frankenphp/types"
+    "strings"
+)
+
+// export_php:const
+const STR_REVERSE = iota
+
+// export_php:const
+const STR_NORMAL = iota
+
+// export_php:function repeat_this(string $str, int $count, int $mode): string
+func repeat_this(s *C.zend_string, count int64, mode int) unsafe.Pointer {
+    str := frankenphp.GoString(unsafe.Pointer(s))
+
+    result := strings.Repeat(str, int(count))
+    if mode == STR_REVERSE { 
+	    // reverse the string
+    }
+
+    if mode == STR_NORMAL {
+        // no-op, just to showcase the constant
+    }
+
+    return frankenphp.PHPString(result, false)
+}
+```
+
+After generating the extension, the new global constants are available to use:
+
+```php
+<?php
+
+var_dump(repeat_this('Hello World', 5, \STR_REVERSE));
+```
+
 ## Declaring a Native PHP Class
 
 The generator also supports declaring classes as Go structs, which can be used to create PHP objects. You can use the
-`// export_php` directive comment to define a PHP class. For example:
+`//export_php:class` directive comment to define a PHP class. For example:
 
 ```go
-// export_php class FrankenPhp
+//export_php:class FrankenPhp
 type FrankenPhpGoStruct struct {
     Name       string
     Type       int

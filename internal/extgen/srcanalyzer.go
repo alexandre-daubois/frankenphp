@@ -61,7 +61,7 @@ func (sa *SourceAnalyzer) extractInternalFunctions(content string) []string {
 				if prevLine == "" {
 					continue
 				}
-				if strings.Contains(prevLine, "export_php") {
+				if strings.Contains(prevLine, "export_php:") {
 					hasPHPFunc = true
 					break
 				}

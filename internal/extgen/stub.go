@@ -23,6 +23,27 @@ func (sg *StubGenerator) buildContent() string {
 
 	builder.WriteString("<?php\n\n/** @generate-class-entries */\n\n")
 
+	for _, constant := range sg.generator.Constants {
+		if constant.IsIota {
+			// For iota constants, use @cvalue annotation to let PHP generate the value
+			builder.WriteString(fmt.Sprintf(`/**
+ * @var int
+ * @cvalue %s
+ */
+const %s = UNKNOWN;
+
+`, constant.Name, constant.Name))
+		} else {
+			phpType := getPhpTypeAnnotation(constant.Type)
+			builder.WriteString(fmt.Sprintf(`/**
+ * @var %s
+ */
+const %s = %s;
+
+`, phpType, constant.Name, constant.Value))
+		}
+	}
+
 	for _, fn := range sg.generator.Functions {
 		builder.WriteString(fmt.Sprintf("function %s {}\n\n", fn.Signature))
 	}
@@ -44,4 +65,20 @@ func (sg *StubGenerator) buildContent() string {
 	}
 
 	return builder.String()
+}
+
+// getPhpTypeAnnotation converts Go constant type to PHP type annotation
+func getPhpTypeAnnotation(goType string) string {
+	switch goType {
+	case "string":
+		return "string"
+	case "bool":
+		return "bool"
+	case "float":
+		return "float"
+	case "int":
+		return "int"
+	default:
+		return "int" // fallback
+	}
 }

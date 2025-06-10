@@ -13,5 +13,8 @@ typedef struct go_string {
   size_t len;
   char *data;
 } go_string;
-
+{{if .Constants}}
+/* User defined constants */{{end}}
+{{range .Constants}}#define {{.Name}} {{.CValue}}
+{{end}}
 #endif

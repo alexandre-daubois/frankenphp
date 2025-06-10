@@ -36,10 +36,7 @@ func (gg *GoFileGenerator) buildContent() (string, error) {
 #include "%s.h"
 */
 import "C"
-import (
-	"runtime/cgo"
-	"unsafe"
-)
+import "runtime/cgo"
 `, cleanPackageName, gg.generator.BaseName))
 
 	for _, imp := range imports {

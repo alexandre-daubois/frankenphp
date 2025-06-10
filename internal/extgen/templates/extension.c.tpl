@@ -110,7 +110,7 @@ static zval *{{.BaseName}}_write_property(zend_object *object, zend_string *memb
             }
             {{else if eq .Type "float"}}
             if (Z_TYPE_P(value) == IS_DOUBLE) {
-                set_{{$class.Name}}_{{.Name}}_property(intern->go_handle, value);
+                set_{{$class.Name}}_{{.Name}}_property(intern->go_handle, Z_DVAL_P(value));
             }
             {{else if eq .Type "bool"}}
             if (Z_TYPE_P(value) == IS_TRUE || Z_TYPE_P(value) == IS_FALSE) {

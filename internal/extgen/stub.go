@@ -9,13 +9,21 @@ import (
 )
 
 type StubGenerator struct {
-	generator *Generator
+	Generator *Generator
+}
+
+func (sg *StubGenerator) Generate() error {
+	return sg.generate()
 }
 
 func (sg *StubGenerator) generate() error {
-	filename := filepath.Join(sg.generator.BuildDir, sg.generator.BaseName+".stub.php")
+	filename := filepath.Join(sg.Generator.BuildDir, sg.Generator.BaseName+".stub.php")
 	content := sg.buildContent()
 	return WriteFile(filename, content)
+}
+
+func (sg *StubGenerator) BuildContent() string {
+	return sg.buildContent()
 }
 
 func (sg *StubGenerator) buildContent() string {
@@ -23,7 +31,7 @@ func (sg *StubGenerator) buildContent() string {
 
 	builder.WriteString("<?php\n\n/** @generate-class-entries */\n\n")
 
-	for _, constant := range sg.generator.Constants {
+	for _, constant := range sg.Generator.Constants {
 		if constant.IsIota {
 			// For iota constants, use @cvalue annotation to let PHP generate the value
 			builder.WriteString(fmt.Sprintf(`/**
@@ -44,11 +52,11 @@ const %s = %s;
 		}
 	}
 
-	for _, fn := range sg.generator.Functions {
+	for _, fn := range sg.Generator.Functions {
 		builder.WriteString(fmt.Sprintf("function %s {}\n\n", fn.Signature))
 	}
 
-	for _, class := range sg.generator.Classes {
+	for _, class := range sg.Generator.Classes {
 		builder.WriteString(fmt.Sprintf("class %s {\n", class.Name))
 
 		for _, prop := range class.Properties {
@@ -61,6 +69,11 @@ const %s = %s;
 		}
 
 		builder.WriteString("\n    public function __construct() {}\n")
+
+		for _, method := range class.Methods {
+			builder.WriteString(fmt.Sprintf("\n    public function %s {}\n", method.Signature))
+		}
+
 		builder.WriteString("}\n\n")
 	}
 

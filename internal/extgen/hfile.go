@@ -19,6 +19,7 @@ type HeaderGenerator struct {
 type TemplateData struct {
 	HeaderGuard string
 	Constants   []PHPConstant
+	Classes     []PHPClass
 }
 
 func (hg *HeaderGenerator) generate() error {
@@ -50,6 +51,7 @@ func (hg *HeaderGenerator) buildContent() (string, error) {
 	err = tmpl.Execute(&buf, TemplateData{
 		HeaderGuard: headerGuard,
 		Constants:   hg.generator.Constants,
+		Classes:     hg.generator.Classes,
 	})
 
 	if err != nil {

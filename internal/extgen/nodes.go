@@ -27,6 +27,19 @@ type PHPClass struct {
 	Name       string
 	GoStruct   string
 	Properties []ClassProperty
+	Methods    []ClassMethod
+}
+
+type ClassMethod struct {
+	Name             string
+	PHPName          string
+	Signature        string
+	GoFunction       string
+	Params           []Parameter
+	ReturnType       string
+	IsReturnNullable bool
+	LineNumber       int
+	ClassName        string // used by the "//export_php:method" directive
 }
 
 type ClassProperty struct {
@@ -57,4 +70,62 @@ func (c PHPConstant) CValue() string {
 	}
 
 	return c.Value
+}
+
+// CReturnType returns the C type for method return type
+func (m ClassMethod) CReturnType() string {
+	return phpTypeToCType(m.ReturnType)
+}
+
+// CGOReturnType returns the CGO type for method return type
+func (m ClassMethod) CGOReturnType() string {
+	return phpTypeToCGOType(m.ReturnType)
+}
+
+// CType returns the C type for parameter
+func (p Parameter) CType() string {
+	return phpTypeToCType(p.Type)
+}
+
+// CGOType returns the CGO type for parameter
+func (p Parameter) CGOType() string {
+	return phpTypeToCGOType(p.Type)
+}
+
+// phpTypeToCType converts PHP types to C types for headers
+func phpTypeToCType(phpType string) string {
+	typeMap := map[string]string{
+		"void":   "void",
+		"string": "void*", // Use void* for strings, CGO will handle conversion
+		"int":    "int64_t",
+		"float":  "double",
+		"bool":   "int",   // C uses int for bool
+		"array":  "void*", // Arrays are complex, use void*
+		"mixed":  "void*",
+	}
+
+	if cType, exists := typeMap[phpType]; exists {
+		return cType
+	}
+
+	return "void*" // fallback
+}
+
+// phpTypeToCGOType converts PHP types to CGO types for headers
+func phpTypeToCGOType(phpType string) string {
+	typeMap := map[string]string{
+		"void":   "void",
+		"string": "GoString",
+		"int":    "GoInt64",
+		"float":  "GoFloat64",
+		"bool":   "GoUint8", // CGO uses uint8 for bool
+		"array":  "GoSlice", // Arrays become slices in Go
+		"mixed":  "GoInterface",
+	}
+
+	if cgoType, exists := typeMap[phpType]; exists {
+		return cgoType
+	}
+
+	return "GoInterface" // fallback to interface{}
 }

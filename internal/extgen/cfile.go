@@ -3,6 +3,7 @@ package extgen
 import (
 	"bytes"
 	_ "embed"
+	"github.com/iancoleman/strcase"
 	"path/filepath"
 	"strings"
 	"text/template"
@@ -50,7 +51,10 @@ func (cg *CFileGenerator) buildContent() (string, error) {
 }
 
 func (cg *CFileGenerator) getTemplateContent() (string, error) {
-	tmpl, err := template.New("cfile").Parse(cFileContent)
+	funcMap := template.FuncMap{
+		"ToLower": strcase.ToLowerCamel,
+	}
+	tmpl, err := template.New("cfile").Funcs(funcMap).Parse(cFileContent)
 	if err != nil {
 		return "", err
 	}

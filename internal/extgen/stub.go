@@ -64,7 +64,7 @@ const %s = %s;
 			if prop.IsNullable {
 				nullable = "?"
 			}
-			builder.WriteString(fmt.Sprintf("    public %s%s $%s;\n",
+			builder.WriteString(fmt.Sprintf("    private %s%s $%s;\n",
 				nullable, prop.Type, strcase.ToLowerCamel(prop.Name)))
 		}
 

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-
-	"github.com/iancoleman/strcase"
 )
 
 type StubGenerator struct {
@@ -58,15 +56,6 @@ const %s = %s;
 
 	for _, class := range sg.Generator.Classes {
 		builder.WriteString(fmt.Sprintf("class %s {\n", class.Name))
-
-		for _, prop := range class.Properties {
-			nullable := ""
-			if prop.IsNullable {
-				nullable = "?"
-			}
-			builder.WriteString(fmt.Sprintf("    private %s%s $%s;\n",
-				nullable, prop.Type, strcase.ToLowerCamel(prop.Name)))
-		}
 
 		builder.WriteString("\n    public function __construct() {}\n")
 

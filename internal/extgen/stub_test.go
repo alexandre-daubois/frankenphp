@@ -1,7 +1,6 @@
 package extgen
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,10 +40,6 @@ func TestStubGenerator_Generate(t *testing.T) {
 			{
 				Name:     "User",
 				GoStruct: "UserStruct",
-				Properties: []ClassProperty{
-					{Name: "id", Type: "int"},
-					{Name: "name", Type: "string"},
-				},
 			},
 		},
 	}
@@ -107,18 +102,12 @@ func TestStubGenerator_BuildContent(t *testing.T) {
 			classes: []PHPClass{
 				{
 					Name: "TestClass",
-					Properties: []ClassProperty{
-						{Name: "id", Type: "int"},
-						{Name: "name", Type: "string"},
-					},
 				},
 			},
 			contains: []string{
 				"<?php",
 				"/** @generate-class-entries */",
 				"class TestClass {",
-				"public int $id;",
-				"public string $name;",
 				"public function __construct() {}",
 				"}",
 			},
@@ -134,15 +123,11 @@ func TestStubGenerator_BuildContent(t *testing.T) {
 			classes: []PHPClass{
 				{
 					Name: "Result",
-					Properties: []ClassProperty{
-						{Name: "success", Type: "bool"},
-					},
 				},
 			},
 			contains: []string{
 				"function process(array $data): array {}",
 				"class Result {",
-				"public bool $success;",
 				"public function __construct() {}",
 			},
 		},
@@ -233,63 +218,17 @@ func TestStubGenerator_ClassGeneration(t *testing.T) {
 			name: "simple class",
 			class: PHPClass{
 				Name: "SimpleClass",
-				Properties: []ClassProperty{
-					{Name: "id", Type: "int"},
-				},
 			},
 			contains: []string{
 				"class SimpleClass {",
-				"public int $id;",
 				"public function __construct() {}",
 				"}",
 			},
 		},
 		{
-			name: "class with nullable properties",
-			class: PHPClass{
-				Name: "NullableClass",
-				Properties: []ClassProperty{
-					{Name: "required", Type: "string", IsNullable: false},
-					{Name: "optional", Type: "string", IsNullable: true},
-				},
-			},
-			contains: []string{
-				"class NullableClass {",
-				"public string $required;",
-				"public ?string $optional;",
-				"public function __construct() {}",
-			},
-		},
-		{
-			name: "class with various property types",
-			class: PHPClass{
-				Name: "VariousTypes",
-				Properties: []ClassProperty{
-					{Name: "id", Type: "int"},
-					{Name: "name", Type: "string"},
-					{Name: "price", Type: "float"},
-					{Name: "active", Type: "bool"},
-					{Name: "tags", Type: "array"},
-					{Name: "metadata", Type: "object"},
-					{Name: "mixed_data", Type: "mixed"},
-				},
-			},
-			contains: []string{
-				"class VariousTypes {",
-				"public int $id;",
-				"public string $name;",
-				"public float $price;",
-				"public bool $active;",
-				"public array $tags;",
-				"public object $metadata;",
-				"public mixed $mixedData;",
-			},
-		},
-		{
 			name: "class with no properties",
 			class: PHPClass{
-				Name:       "EmptyClass",
-				Properties: []ClassProperty{},
+				Name: "EmptyClass",
 			},
 			contains: []string{
 				"class EmptyClass {",
@@ -317,43 +256,6 @@ func TestStubGenerator_ClassGeneration(t *testing.T) {
 	}
 }
 
-func TestStubGenerator_PropertyNaming(t *testing.T) {
-	tests := []struct {
-		propertyName string
-		expected     string
-	}{
-		{"ID", "public int $id;"},
-		{"Name", "public string $name;"},
-		{"UserID", "public int $userId;"},
-		{"XMLData", "public string $xmldata;"},
-		{"camelCase", "public string $camelCase;"},
-		{"snake_case", "public string $snakeCase;"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.propertyName, func(t *testing.T) {
-			class := PHPClass{
-				Name: "TestClass",
-				Properties: []ClassProperty{
-					{Name: tt.propertyName, Type: "string"},
-				},
-			}
-
-			if tt.propertyName == "ID" || tt.propertyName == "UserID" {
-				class.Properties[0].Type = "int"
-			}
-
-			generator := &Generator{Classes: []PHPClass{class}}
-			stubGen := StubGenerator{generator}
-			content := stubGen.buildContent()
-
-			if !strings.Contains(content, tt.expected) {
-				t.Errorf("Property naming: expected '%s' in generated content\nGenerated:\n%s", tt.expected, content)
-			}
-		})
-	}
-}
-
 func TestStubGenerator_MultipleItems(t *testing.T) {
 	functions := []PHPFunction{
 		{
@@ -373,16 +275,9 @@ func TestStubGenerator_MultipleItems(t *testing.T) {
 	classes := []PHPClass{
 		{
 			Name: "Class1",
-			Properties: []ClassProperty{
-				{Name: "prop1", Type: "string"},
-			},
 		},
 		{
 			Name: "Class2",
-			Properties: []ClassProperty{
-				{Name: "prop2", Type: "int"},
-				{Name: "prop3", Type: "bool"},
-			},
 		},
 	}
 
@@ -476,11 +371,6 @@ func TestStubGenerator_PHPSyntaxValidation(t *testing.T) {
 	classes := []PHPClass{
 		{
 			Name: "ComplexClass",
-			Properties: []ClassProperty{
-				{Name: "id", Type: "int", IsNullable: false},
-				{Name: "data", Type: "string", IsNullable: true},
-				{Name: "metadata", Type: "array", IsNullable: true},
-			},
 		},
 	}
 
@@ -499,7 +389,6 @@ func TestStubGenerator_PHPSyntaxValidation(t *testing.T) {
 		{"<?php", "should start with PHP opening tag"},
 		{"{", "should contain opening braces"},
 		{"}", "should contain closing braces"},
-		{";", "should contain semicolons"},
 		{"public", "should use proper visibility"},
 		{"function", "should contain function keyword"},
 		{"class", "should contain class keyword"},
@@ -531,9 +420,6 @@ func TestStubGenerator_FileStructure(t *testing.T) {
 		Classes: []PHPClass{
 			{
 				Name: "TestClass",
-				Properties: []ClassProperty{
-					{Name: "prop", Type: "string"},
-				},
 			},
 		},
 	}
@@ -566,60 +452,6 @@ func TestStubGenerator_FileStructure(t *testing.T) {
 	contentStr := strings.Join(lines, "\n")
 	if !strings.Contains(contentStr, "\n\n") {
 		t.Error("Should have proper spacing between sections")
-	}
-}
-
-func TestStubGenerator_PropertyTypeMapping(t *testing.T) {
-	tests := []struct {
-		goType      string
-		phpType     string
-		isNullable  bool
-		expectedPHP string
-	}{
-		{"string", "string", false, "public string $"},
-		{"string", "string", true, "public ?string $"},
-		{"int", "int", false, "public int $"},
-		{"int", "int", true, "public ?int $"},
-		{"float", "float", false, "public float $"},
-		{"float", "float", true, "public ?float $"},
-		{"bool", "bool", false, "public bool $"},
-		{"bool", "bool", true, "public ?bool $"},
-		{"array", "array", false, "public array $"},
-		{"array", "array", true, "public ?array $"},
-		{"object", "object", false, "public object $"},
-		{"object", "object", true, "public ?object $"},
-		{"mixed", "mixed", false, "public mixed $"},
-		{"mixed", "mixed", true, "public ?mixed $"},
-	}
-
-	for _, tt := range tests {
-		nullableStr := "false"
-		if tt.isNullable {
-			nullableStr = "true"
-		}
-
-		t.Run(tt.goType+"_nullable_"+nullableStr, func(t *testing.T) {
-			class := PHPClass{
-				Name: "TypeTest",
-				Properties: []ClassProperty{
-					{
-						Name:       "testProp",
-						Type:       tt.phpType,
-						GoType:     tt.goType,
-						IsNullable: tt.isNullable,
-					},
-				},
-			}
-
-			generator := &Generator{Classes: []PHPClass{class}}
-			stubGen := StubGenerator{generator}
-			content := stubGen.buildContent()
-
-			expectedDeclaration := tt.expectedPHP + "testProp;"
-			if !strings.Contains(content, expectedDeclaration) {
-				t.Errorf("Should contain property declaration: %s\nGenerated:\n%s", expectedDeclaration, content)
-			}
-		})
 	}
 }
 
@@ -662,17 +494,6 @@ func testStubClasses(t *testing.T, content string, classes []PHPClass) {
 		expectedConstructor := "public function __construct() {}"
 		if !strings.Contains(content, expectedConstructor) {
 			t.Errorf("Class %s should have constructor", class.Name)
-		}
-
-		for _, prop := range class.Properties {
-			nullable := ""
-			if prop.IsNullable {
-				nullable = "?"
-			}
-			expectedProp := fmt.Sprintf("public %s%s $%s;", nullable, prop.Type, strings.ToLower(prop.Name))
-			if !strings.Contains(content, expectedProp) {
-				t.Errorf("Class %s should contain property: %s", class.Name, expectedProp)
-			}
 		}
 
 		if !strings.Contains(content, "}") {

@@ -166,26 +166,34 @@ var_dump(repeat_this('Hello World', 5, \STR_REVERSE));
 
 ## Declaring a Native PHP Class
 
-The generator also supports declaring classes as Go structs, which can be used to create PHP objects. You can use the
+The generator supports declaring **opaque classes** as Go structs, which can be used to create PHP objects. You can use the
 `//export_php:class` directive comment to define a PHP class. For example:
 
 ```go
-//export_php:class FrankenPhp
-type FrankenPhpGoStruct struct {
-    Name       string
-    Type       int
-    IsNullable *bool
+//export_php:class User
+type UserStruct struct {
+    Name string
+    Age  int
 }
 ```
 
-That's it. The generator will automatically generate the PHP class with the properties defined in the Go struct. You can
-then use this class in your PHP code.
+### What are Opaque Classes?
+
+**Opaque classes** are classes where the internal structure (properties) is hidden from PHP code. This means:
+
+- **No direct property access**: You cannot read or write properties directly from PHP (`$user->name` won't work)
+- **Method-only interface** - All interactions must go through methods you define
+- **Better encapsulation** - Internal data structure is completely controlled by Go code
+- **Type safety** - No risk of PHP code corrupting internal state with wrong types
+- **Cleaner API** - Forces to design a proper public interface
+
+This approach provides better encapsulation and prevents PHP code from accidentally corrupting the internal state of
+your Go objects. All interactions with the object must go through the methods you explicitly define.
 
 ### Adding Methods to Classes
 
-You can also add methods to your PHP classes using the `//export_php:method` directive. This allows you to define
-behavior for your classes:
-
+Since properties are not directly accessible, you **must define methods** to interact with your opaque classes. Use
+the `//export_php:method` directive to define behavior:
 
 ```go
 //export_php:class User
@@ -196,17 +204,22 @@ type UserStruct struct {
 
 //export_php:method User::getName(): string
 func (us *UserStruct) GetUserName() unsafe.Pointer {
-    return frankenphp.PHPString(us.Name)
+    return frankenphp.PHPString(us.Name, false)
 }
 
 //export_php:method User::setAge(int $age): void
 func (us *UserStruct) SetUserAge(age int64) {
-    u.Age = age
+    us.Age = int(age)
+}
+
+//export_php:method User::getAge(): int
+func (us *UserStruct) GetUserAge() int64 {
+    return int64(us.Age)
 }
 
 //export_php:method User::setNamePrefix(string $prefix = "User"): void
 func (us *UserStruct) SetNamePrefix(prefix *C.zend_string) {
-    u.Name = frankenphp.GoString(unsafe.Pointer(prefix)) + ": " + u.Name
+    us.Name = frankenphp.GoString(unsafe.Pointer(prefix)) + ": " + us.Name
 }
 ```
 
@@ -217,16 +230,26 @@ func (us *UserStruct) SetNamePrefix(prefix *C.zend_string) {
 > - **Arrays and objects are not supported** as parameter types or return types
 > - Only primitive types are supported: `string`, `int`, `float`, `bool` and `void` (for return type)
 
-After generating the extension, you can use the class and its methods in PHP:
+After generating the extension, you can use the class and its methods in PHP. Note that you **cannot access properties directly**:
 
 ```php
 <?php
 
 $user = new User();
+
+// ✅ This works - using methods
 $user->setAge(25);
-echo $user->getName(); // Output: User name
-echo $user->setNamePrefix("Employee"); // Output: Employee: User name
+echo $user->getName();           // Output: (empty, default value)
+echo $user->getAge();            // Output: 25
+$user->setNamePrefix("Employee");
+
+// ❌ This will NOT work - direct property access
+// echo $user->name;             // Error: Cannot access private property
+// $user->age = 30;              // Error: Cannot access private property
 ```
+
+This design ensures that your Go code has complete control over how the object's state is accessed and
+modified, providing better encapsulation and type safety.
 
 ## Generating the Extension
 

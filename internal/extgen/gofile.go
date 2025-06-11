@@ -104,60 +104,6 @@ func create_%s_object() C.uintptr_t {
 }
 
 `, class.GoStruct, class.GoStruct, class.GoStruct))
-		for _, prop := range class.Properties {
-			builder.WriteString(fmt.Sprintf("//export get_%s_%s_property\n", class.Name, prop.Name))
-			if prop.GoType == "string" {
-				builder.WriteString(fmt.Sprintf(`func get_%s_%s_property(handle C.uintptr_t) unsafe.Pointer {
-	obj := getGoObject(handle)
-	if obj == nil {
-		return nil
-	}
-	structObj := obj.(*%s)
-	return frankenphp.PHPString(structObj.%s, false)
-}
-
-`, class.Name, prop.Name, class.GoStruct, prop.Name))
-			} else {
-				goReturnType := gg.phpTypeToGoType(prop.Type)
-				builder.WriteString(fmt.Sprintf(`func get_%s_%s_property(handle C.uintptr_t) %s {
-	obj := getGoObject(handle)
-	if obj == nil {
-		var zero %s
-		return zero
-	}
-	structObj := obj.(*%s)
-	return structObj.%s
-}
-
-`, class.Name, prop.Name, goReturnType, goReturnType, class.GoStruct, prop.Name))
-			}
-
-			builder.WriteString(fmt.Sprintf("//export set_%s_%s_property\n", class.Name, prop.Name))
-			if prop.GoType == "string" {
-				builder.WriteString(fmt.Sprintf(`func set_%s_%s_property(handle C.uintptr_t, value *C.zend_string) {
-	obj := getGoObject(handle)
-	if obj == nil {
-		return
-	}
-	structObj := obj.(*%s)
-	structObj.%s = frankenphp.GoString(unsafe.Pointer(value))
-}
-
-`, class.Name, prop.Name, class.GoStruct, prop.Name))
-			} else {
-				goType := gg.phpTypeToGoType(prop.Type)
-				builder.WriteString(fmt.Sprintf(`func set_%s_%s_property(handle C.uintptr_t, value %s) {
-	obj := getGoObject(handle)
-	if obj == nil {
-		return
-	}
-	structObj := obj.(*%s)
-	structObj.%s = value
-}
-
-`, class.Name, prop.Name, goType, class.GoStruct, prop.Name))
-			}
-		}
 
 		for _, method := range class.Methods {
 			if method.GoFunction != "" {

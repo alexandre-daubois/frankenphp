@@ -49,44 +49,6 @@ static void {{.BaseName}}_free_object(zend_object *object) {
     zend_object_std_dtor(&intern->std);
 }
 
-static HashTable *{{.BaseName}}_get_properties(zend_object *object) {
-    {{.BaseName}}_object *intern = {{.BaseName}}_object_from_obj(object);
-    HashTable *props = zend_std_get_properties(object);
-    
-    if (intern->go_handle == 0) {
-        return props;
-    }
-    
-    {{range $class := .Classes}}
-    if (strcmp(intern->class_name, "{{$class.Name}}") == 0) {
-        {{range $class.Properties}}
-        zval property_value_{{.Name}};
-        {{if eq .Type "string"}}
-        zend_string* result_{{.Name}} = get_{{$class.Name}}_{{.Name}}_property(intern->go_handle);
-        if (result_{{.Name}}) {
-            ZVAL_STR(&property_value_{{.Name}}, result_{{.Name}});
-        } else {
-            ZVAL_EMPTY_STRING(&property_value_{{.Name}});
-        }
-        {{else if eq .Type "int"}}
-        zend_long result_{{.Name}} = get_{{$class.Name}}_{{.Name}}_property(intern->go_handle);
-        ZVAL_LONG(&property_value_{{.Name}}, result_{{.Name}});
-        {{else if eq .Type "float"}}
-        float result_{{.Name}} = get_{{$class.Name}}_{{.Name}}_property(intern->go_handle);
-        ZVAL_DOUBLE(&property_value_{{.Name}}, result_{{.Name}});
-        {{else if eq .Type "bool"}}
-        bool result_{{.Name}} = get_{{$class.Name}}_{{.Name}}_property(intern->go_handle);
-        ZVAL_BOOL(&property_value_{{.Name}}, result_{{.Name}});
-        {{end}}
-        zend_string *prop_name_{{.Name}} = zend_mangle_property_name("{{$class.Name}}", sizeof("{{$class.Name}}") - 1, "{{.Name | ToLower}}", sizeof("{{.Name | ToLower}}") - 1, 1);
-        zend_hash_update(props, prop_name_{{.Name}}, &property_value_{{.Name}});
-        zend_string_release(prop_name_{{.Name}});
-        {{end}}
-    }
-    {{end}}
-    
-    return props;
-}
 
 static zend_function *{{.BaseName}}_get_method(zend_object **object, zend_string *method, const zval *key) {
     {{.BaseName}}_object *intern = {{.BaseName}}_object_from_obj(*object);
@@ -104,7 +66,6 @@ static zend_function *{{.BaseName}}_get_method(zend_object **object, zend_string
 void init_object_handlers() {
     memcpy(&object_handlers_{{.BaseName}}, &std_object_handlers, sizeof(zend_object_handlers));
     object_handlers_{{.BaseName}}.get_method = {{.BaseName}}_get_method;
-    object_handlers_{{.BaseName}}.get_properties = {{.BaseName}}_get_properties;
     object_handlers_{{.BaseName}}.free_obj = {{.BaseName}}_free_object;
     object_handlers_{{.BaseName}}.offset = offsetof({{.BaseName}}_object, std);
 }

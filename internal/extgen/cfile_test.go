@@ -483,6 +483,108 @@ func TestCFileContentValidation(t *testing.T) {
 	}
 }
 
+func TestCFileConstants(t *testing.T) {
+	tests := []struct {
+		name      string
+		baseName  string
+		constants []PHPConstant
+		classes   []PHPClass
+		contains  []string
+	}{
+		{
+			name:     "global constants only",
+			baseName: "const_test",
+			constants: []PHPConstant{
+				{
+					Name:  "GLOBAL_INT",
+					Value: "42",
+					Type:  "int",
+				},
+				{
+					Name:  "GLOBAL_STRING",
+					Value: "\"test\"",
+					Type:  "string",
+				},
+			},
+			contains: []string{
+				"REGISTER_LONG_CONSTANT(\"GLOBAL_INT\", 42, CONST_CS | CONST_PERSISTENT);",
+				"REGISTER_STRING_CONSTANT(\"GLOBAL_STRING\", \"test\", CONST_CS | CONST_PERSISTENT);",
+			},
+		},
+		{
+			name:     "class constants only",
+			baseName: "class_const_test",
+			classes: []PHPClass{
+				{Name: "MyClass", GoStruct: "MyStruct"},
+			},
+			constants: []PHPConstant{
+				{
+					Name:      "STATUS_ACTIVE",
+					Value:     "1",
+					Type:      "int",
+					ClassName: "MyClass",
+				},
+				{
+					Name:      "STATUS_INACTIVE",
+					Value:     "0",
+					Type:      "int",
+					ClassName: "MyClass",
+				},
+			},
+			contains: []string{
+				"zend_declare_class_constant_long(MyClass_ce, \"STATUS_ACTIVE\", sizeof(\"STATUS_ACTIVE\")-1, 1);",
+				"zend_declare_class_constant_long(MyClass_ce, \"STATUS_INACTIVE\", sizeof(\"STATUS_INACTIVE\")-1, 0);",
+			},
+		},
+		{
+			name:     "mixed global and class constants",
+			baseName: "mixed_const_test",
+			classes: []PHPClass{
+				{Name: "TestClass", GoStruct: "TestStruct"},
+			},
+			constants: []PHPConstant{
+				{
+					Name:  "GLOBAL_CONST",
+					Value: "99",
+					Type:  "int",
+				},
+				{
+					Name:      "CLASS_CONST",
+					Value:     "\"class_value\"",
+					Type:      "string",
+					ClassName: "TestClass",
+				},
+			},
+			contains: []string{
+				"REGISTER_LONG_CONSTANT(\"GLOBAL_CONST\", 99, CONST_CS | CONST_PERSISTENT);",
+				"zend_declare_class_constant_string(TestClass_ce, \"CLASS_CONST\", sizeof(\"CLASS_CONST\")-1, \"class_value\");",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			generator := &Generator{
+				BaseName:  tt.baseName,
+				Constants: tt.constants,
+				Classes:   tt.classes,
+			}
+
+			cGen := CFileGenerator{generator}
+			content, err := cGen.buildContent()
+			if err != nil {
+				t.Fatalf("buildContent() failed: %v", err)
+			}
+
+			for _, expected := range tt.contains {
+				if !strings.Contains(content, expected) {
+					t.Errorf("Generated C content should contain '%s'\nGenerated:\n%s", expected, content)
+				}
+			}
+		})
+	}
+}
+
 func TestCFileTemplateErrorHandling(t *testing.T) {
 	generator := &Generator{
 		BaseName: "error_test",

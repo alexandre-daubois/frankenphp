@@ -42,6 +42,19 @@ func TestStubGenerator_Generate(t *testing.T) {
 				GoStruct: "UserStruct",
 			},
 		},
+		Constants: []PHPConstant{
+			{
+				Name:  "GLOBAL_CONST",
+				Value: "42",
+				Type:  "int",
+			},
+			{
+				Name:      "USER_STATUS_ACTIVE",
+				Value:     "1",
+				Type:      "int",
+				ClassName: "User",
+			},
+		},
 	}
 
 	stubGen := StubGenerator{generator}
@@ -63,6 +76,7 @@ func TestStubGenerator_Generate(t *testing.T) {
 	testStubBasicStructure(t, content)
 	testStubFunctions(t, content, generator.Functions)
 	testStubClasses(t, content, generator.Classes)
+	testStubConstants(t, content, generator.Constants)
 }
 
 func TestStubGenerator_BuildContent(t *testing.T) {
@@ -70,12 +84,14 @@ func TestStubGenerator_BuildContent(t *testing.T) {
 		name      string
 		functions []PHPFunction
 		classes   []PHPClass
+		constants []PHPConstant
 		contains  []string
 	}{
 		{
 			name:      "empty extension",
 			functions: []PHPFunction{},
 			classes:   []PHPClass{},
+			constants: []PHPConstant{},
 			contains: []string{
 				"<?php",
 				"/** @generate-class-entries */",
@@ -89,7 +105,8 @@ func TestStubGenerator_BuildContent(t *testing.T) {
 					Signature: "testFunc(string $param): bool",
 				},
 			},
-			classes: []PHPClass{},
+			classes:   []PHPClass{},
+			constants: []PHPConstant{},
 			contains: []string{
 				"<?php",
 				"/** @generate-class-entries */",
@@ -104,12 +121,30 @@ func TestStubGenerator_BuildContent(t *testing.T) {
 					Name: "TestClass",
 				},
 			},
+			constants: []PHPConstant{},
 			contains: []string{
 				"<?php",
 				"/** @generate-class-entries */",
 				"class TestClass {",
 				"public function __construct() {}",
 				"}",
+			},
+		},
+		{
+			name:      "constants only",
+			functions: []PHPFunction{},
+			classes:   []PHPClass{},
+			constants: []PHPConstant{
+				{
+					Name:  "GLOBAL_CONST",
+					Value: "\"test\"",
+					Type:  "string",
+				},
+			},
+			contains: []string{
+				"<?php",
+				"/** @generate-class-entries */",
+				"const GLOBAL_CONST = \"test\";",
 			},
 		},
 		{
@@ -125,6 +160,7 @@ func TestStubGenerator_BuildContent(t *testing.T) {
 					Name: "Result",
 				},
 			},
+			constants: []PHPConstant{},
 			contains: []string{
 				"function process(array $data): array {}",
 				"class Result {",
@@ -138,6 +174,7 @@ func TestStubGenerator_BuildContent(t *testing.T) {
 			generator := &Generator{
 				Functions: tt.functions,
 				Classes:   tt.classes,
+				Constants: tt.constants,
 			}
 
 			stubGen := StubGenerator{generator}
@@ -412,6 +449,113 @@ func TestStubGenerator_PHPSyntaxValidation(t *testing.T) {
 	}
 }
 
+func TestStubGenerator_ClassConstants(t *testing.T) {
+	tests := []struct {
+		name      string
+		classes   []PHPClass
+		constants []PHPConstant
+		contains  []string
+	}{
+		{
+			name: "class with constants",
+			classes: []PHPClass{
+				{Name: "MyClass"},
+			},
+			constants: []PHPConstant{
+				{
+					Name:      "STATUS_ACTIVE",
+					Value:     "1",
+					Type:      "int",
+					ClassName: "MyClass",
+				},
+				{
+					Name:      "STATUS_INACTIVE",
+					Value:     "0",
+					Type:      "int",
+					ClassName: "MyClass",
+				},
+			},
+			contains: []string{
+				"class MyClass {",
+				"public const STATUS_ACTIVE = 1;",
+				"public const STATUS_INACTIVE = 0;",
+				"public function __construct() {}",
+			},
+		},
+		{
+			name: "class with iota constants",
+			classes: []PHPClass{
+				{Name: "StatusClass"},
+			},
+			constants: []PHPConstant{
+				{
+					Name:      "FIRST",
+					Value:     "0",
+					Type:      "int",
+					IsIota:    true,
+					ClassName: "StatusClass",
+				},
+				{
+					Name:      "SECOND",
+					Value:     "1",
+					Type:      "int",
+					IsIota:    true,
+					ClassName: "StatusClass",
+				},
+			},
+			contains: []string{
+				"class StatusClass {",
+				"public const FIRST = UNKNOWN;",
+				"public const SECOND = UNKNOWN;",
+				"@cvalue FIRST",
+				"@cvalue SECOND",
+			},
+		},
+		{
+			name: "global and class constants",
+			classes: []PHPClass{
+				{Name: "TestClass"},
+			},
+			constants: []PHPConstant{
+				{
+					Name:  "GLOBAL_CONST",
+					Value: "\"global\"",
+					Type:  "string",
+				},
+				{
+					Name:      "CLASS_CONST",
+					Value:     "42",
+					Type:      "int",
+					ClassName: "TestClass",
+				},
+			},
+			contains: []string{
+				"const GLOBAL_CONST = \"global\";",
+				"class TestClass {",
+				"public const CLASS_CONST = 42;",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			generator := &Generator{
+				Classes:   tt.classes,
+				Constants: tt.constants,
+			}
+
+			stubGen := StubGenerator{generator}
+			content := stubGen.buildContent()
+
+			for _, expected := range tt.contains {
+				if !strings.Contains(content, expected) {
+					t.Errorf("Generated content should contain '%s'\nGenerated:\n%s", expected, content)
+				}
+			}
+		})
+	}
+}
+
 func TestStubGenerator_FileStructure(t *testing.T) {
 	generator := &Generator{
 		Functions: []PHPFunction{
@@ -455,8 +599,6 @@ func TestStubGenerator_FileStructure(t *testing.T) {
 	}
 }
 
-// Helper functions for testing
-
 func testStubBasicStructure(t *testing.T, content string) {
 	requiredElements := []string{
 		"<?php",
@@ -498,6 +640,36 @@ func testStubClasses(t *testing.T, content string, classes []PHPClass) {
 
 		if !strings.Contains(content, "}") {
 			t.Errorf("Class %s should be properly closed", class.Name)
+		}
+	}
+}
+
+func testStubConstants(t *testing.T, content string, constants []PHPConstant) {
+	for _, constant := range constants {
+		if constant.ClassName == "" {
+			if constant.IsIota {
+				expectedConst := "const " + constant.Name + " = UNKNOWN;"
+				if !strings.Contains(content, expectedConst) {
+					t.Errorf("Stub should contain iota constant: %s", expectedConst)
+				}
+			} else {
+				expectedConst := "const " + constant.Name + " = " + constant.Value + ";"
+				if !strings.Contains(content, expectedConst) {
+					t.Errorf("Stub should contain constant: %s", expectedConst)
+				}
+			}
+		} else {
+			if constant.IsIota {
+				expectedConst := "public const " + constant.Name + " = UNKNOWN;"
+				if !strings.Contains(content, expectedConst) {
+					t.Errorf("Stub should contain class iota constant: %s", expectedConst)
+				}
+			} else {
+				expectedConst := "public const " + constant.Name + " = " + constant.Value + ";"
+				if !strings.Contains(content, expectedConst) {
+					t.Errorf("Stub should contain class constant: %s", expectedConst)
+				}
+			}
 		}
 	}
 }

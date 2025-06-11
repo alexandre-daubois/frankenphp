@@ -149,19 +149,34 @@ void register_all_classes() {
         return;
     }
     {{.Name}}_ce->create_object = {{$.BaseName}}_create_object;
+    
+    /* Register class constants for {{.Name}} */
+    {{- $className := .Name}}
+    {{- range $.Constants}}
+    {{- if eq .ClassName $className}}
+    {{- if .IsIota}}zend_declare_class_constant_long({{.ClassName}}_ce, "{{.Name}}", sizeof("{{.Name}}")-1, {{.Name}});
+    {{- else if eq .Type "string"}}zend_declare_class_constant_string({{.ClassName}}_ce, "{{.Name}}", sizeof("{{.Name}}")-1, {{.CValue}});
+    {{- else if eq .Type "bool"}}zend_declare_class_constant_long({{.ClassName}}_ce, "{{.Name}}", sizeof("{{.Name}}")-1, {{if eq .Value "true"}}1{{else}}0{{end}});
+    {{- else if eq .Type "float"}}zend_declare_class_constant_double({{.ClassName}}_ce, "{{.Name}}", sizeof("{{.Name}}")-1, {{.CValue}});
+    {{- else}}zend_declare_class_constant_long({{.ClassName}}_ce, "{{.Name}}", sizeof("{{.Name}}")-1, {{.CValue}});
+    {{- end}}
+    {{- end}}
+    {{- end}}
     {{- end}}
 }
 {{- end}}
 
 PHP_MINIT_FUNCTION({{.BaseName}}) {
-    {{- if .Classes}}register_all_classes();{{end}}
+    {{ if .Classes}}register_all_classes();{{end}}
     
-    {{- range .Constants}}
-    {{- if .IsIota}}REGISTER_LONG_CONSTANT("{{.Name}}", {{.Name}}, CONST_CS | CONST_PERSISTENT);
-    {{- else if eq .Type "string"}}REGISTER_STRING_CONSTANT("{{.Name}}", {{.CValue}}, CONST_CS | CONST_PERSISTENT);
-    {{- else if eq .Type "bool"}}REGISTER_LONG_CONSTANT("{{.Name}}", {{if eq .Value "true"}}1{{else}}0{{end}}, CONST_CS | CONST_PERSISTENT);
-    {{- else if eq .Type "float"}}REGISTER_DOUBLE_CONSTANT("{{.Name}}", {{.CValue}}, CONST_CS | CONST_PERSISTENT);
-    {{- else}}REGISTER_LONG_CONSTANT("{{.Name}}", {{.CValue}}, CONST_CS | CONST_PERSISTENT);
+    {{ range .Constants}}
+    {{- if eq .ClassName ""}}
+    {{ if .IsIota}}REGISTER_LONG_CONSTANT("{{.Name}}", {{.Name}}, CONST_CS | CONST_PERSISTENT);
+    {{ else if eq .Type "string"}}REGISTER_STRING_CONSTANT("{{.Name}}", {{.CValue}}, CONST_CS | CONST_PERSISTENT);
+    {{ else if eq .Type "bool"}}REGISTER_LONG_CONSTANT("{{.Name}}", {{if eq .Value "true"}}1{{else}}0{{end}}, CONST_CS | CONST_PERSISTENT);
+    {{ else if eq .Type "float"}}REGISTER_DOUBLE_CONSTANT("{{.Name}}", {{.CValue}}, CONST_CS | CONST_PERSISTENT);
+    {{ else}}REGISTER_LONG_CONSTANT("{{.Name}}", {{.CValue}}, CONST_CS | CONST_PERSISTENT);
+    {{- end}}
     {{- end}}
     {{- end}}
 

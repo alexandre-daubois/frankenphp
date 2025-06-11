@@ -323,6 +323,141 @@ func TestConstantParserTypeDetection(t *testing.T) {
 	}
 }
 
+func TestConstantParserClassConstants(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected int
+	}{
+		{
+			name: "single class constant",
+			input: `package main
+
+//export_php:classconst MyClass
+const STATUS_ACTIVE = 1`,
+			expected: 1,
+		},
+		{
+			name: "multiple class constants",
+			input: `package main
+
+//export_php:classconst User
+const STATUS_ACTIVE = "active"
+
+//export_php:classconst User
+const STATUS_INACTIVE = "inactive"
+
+//export_php:classconst Order
+const STATE_PENDING = 0`,
+			expected: 3,
+		},
+		{
+			name: "mixed global and class constants",
+			input: `package main
+
+//export_php:const
+const GLOBAL_CONST = "global"
+
+//export_php:classconst MyClass
+const CLASS_CONST = 42
+
+//export_php:const
+const ANOTHER_GLOBAL = true`,
+			expected: 3,
+		},
+		{
+			name: "class constant with iota",
+			input: `package main
+
+//export_php:classconst Status
+const FIRST = iota
+
+//export_php:classconst Status
+const SECOND = iota`,
+			expected: 2,
+		},
+		{
+			name: "invalid class constant directive",
+			input: `package main
+
+//export_php:classconst
+const INVALID = "missing class name"`,
+			expected: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpfile, err := os.CreateTemp("", "test*.go")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.Remove(tmpfile.Name())
+
+			if _, err := tmpfile.Write([]byte(tt.input)); err != nil {
+				t.Fatal(err)
+			}
+			tmpfile.Close()
+
+			parser := NewConstantParserWithDefRegex()
+			constants, err := parser.parse(tmpfile.Name())
+			if err != nil {
+				t.Fatalf("parse() error = %v", err)
+			}
+
+			if len(constants) != tt.expected {
+				t.Errorf("parse() got %d constants, want %d", len(constants), tt.expected)
+			}
+
+			if tt.name == "single class constant" && len(constants) > 0 {
+				c := constants[0]
+				if c.Name != "STATUS_ACTIVE" {
+					t.Errorf("Expected constant name 'STATUS_ACTIVE', got '%s'", c.Name)
+				}
+				if c.ClassName != "MyClass" {
+					t.Errorf("Expected class name 'MyClass', got '%s'", c.ClassName)
+				}
+				if c.Value != "1" {
+					t.Errorf("Expected constant value '1', got '%s'", c.Value)
+				}
+				if c.Type != "int" {
+					t.Errorf("Expected constant type 'int', got '%s'", c.Type)
+				}
+			}
+
+			if tt.name == "multiple class constants" && len(constants) == 3 {
+				expectedClasses := []string{"User", "User", "Order"}
+				expectedNames := []string{"STATUS_ACTIVE", "STATUS_INACTIVE", "STATE_PENDING"}
+				expectedValues := []string{"\"active\"", "\"inactive\"", "0"}
+
+				for i, c := range constants {
+					if c.ClassName != expectedClasses[i] {
+						t.Errorf("Expected class name '%s', got '%s'", expectedClasses[i], c.ClassName)
+					}
+					if c.Name != expectedNames[i] {
+						t.Errorf("Expected constant name '%s', got '%s'", expectedNames[i], c.Name)
+					}
+					if c.Value != expectedValues[i] {
+						t.Errorf("Expected constant value '%s', got '%s'", expectedValues[i], c.Value)
+					}
+				}
+			}
+
+			if tt.name == "mixed global and class constants" && len(constants) == 3 {
+				if constants[0].ClassName != "" {
+					t.Errorf("First constant should be global, got class name '%s'", constants[0].ClassName)
+				}
+				if constants[1].ClassName != "MyClass" {
+					t.Errorf("Second constant should belong to MyClass, got '%s'", constants[1].ClassName)
+				}
+				if constants[2].ClassName != "" {
+					t.Errorf("Third constant should be global, got class name '%s'", constants[2].ClassName)
+				}
+			}
+		})
+	}
+}
+
 func TestConstantParserRegexMatch(t *testing.T) {
 	parser := NewConstantParserWithDefRegex()
 
@@ -345,6 +480,47 @@ func TestConstantParserRegexMatch(t *testing.T) {
 			matches := parser.constRegex.MatchString(tc.line)
 			if matches != tc.expected {
 				t.Errorf("Expected regex match %v for line '%s', got %v", tc.expected, tc.line, matches)
+			}
+		})
+	}
+}
+
+func TestConstantParserClassConstRegex(t *testing.T) {
+	parser := NewConstantParserWithDefRegex()
+
+	testCases := []struct {
+		line        string
+		shouldMatch bool
+		className   string
+	}{
+		{"//export_php:classconst MyClass", true, "MyClass"},
+		{"// export_php:classconst User", true, "User"},
+		{"//  export_php:classconst  Status", true, "Status"},
+		{"//export_php:classconst Order123", true, "Order123"},
+		{"//export_php:classconst", false, ""},
+		{"//export_php:classconst ", false, ""},
+		{"//export_php:classconst MyClass extra", false, ""},
+		{"//export_php:const", false, ""},
+		{"//export_php:function", false, ""},
+		{"// some other comment", false, ""},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.line, func(t *testing.T) {
+			matches := parser.classConstRegex.FindStringSubmatch(tc.line)
+
+			if tc.shouldMatch {
+				if len(matches) != 2 {
+					t.Errorf("Expected 2 matches for line '%s', got %d", tc.line, len(matches))
+					return
+				}
+				if matches[1] != tc.className {
+					t.Errorf("Expected class name '%s', got '%s'", tc.className, matches[1])
+				}
+			} else {
+				if len(matches) != 0 {
+					t.Errorf("Expected no matches for line '%s', got %d", tc.line, len(matches))
+				}
 			}
 		})
 	}

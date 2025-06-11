@@ -10,17 +10,20 @@ import (
 )
 
 var constRegex = regexp.MustCompile(`//\s*export_php:const$`)
+var classConstRegex = regexp.MustCompile(`//\s*export_php:classconst\s+(\w+)$`)
 var constDeclRegex = regexp.MustCompile(`const\s+(\w+)\s*=\s*(.+)`)
 
 type ConstantParser struct {
-	constRegex     *regexp.Regexp
-	constDeclRegex *regexp.Regexp
+	constRegex      *regexp.Regexp
+	classConstRegex *regexp.Regexp
+	constDeclRegex  *regexp.Regexp
 }
 
 func NewConstantParserWithDefRegex() *ConstantParser {
 	return &ConstantParser{
-		constRegex:     constRegex,
-		constDeclRegex: constDeclRegex,
+		constRegex:      constRegex,
+		classConstRegex: classConstRegex,
+		constDeclRegex:  constDeclRegex,
 	}
 }
 
@@ -36,6 +39,8 @@ func (cp *ConstantParser) parse(filename string) ([]PHPConstant, error) {
 
 	lineNumber := 0
 	expectConstDecl := false
+	expectClassConstDecl := false
+	currentClassName := ""
 	currentConstantValue := 0
 
 	for scanner.Scan() {
@@ -44,10 +49,19 @@ func (cp *ConstantParser) parse(filename string) ([]PHPConstant, error) {
 
 		if cp.constRegex.MatchString(line) {
 			expectConstDecl = true
+			expectClassConstDecl = false
+			currentClassName = ""
 			continue
 		}
 
-		if expectConstDecl && strings.HasPrefix(line, "const ") {
+		if matches := cp.classConstRegex.FindStringSubmatch(line); len(matches) == 2 {
+			expectClassConstDecl = true
+			expectConstDecl = false
+			currentClassName = matches[1]
+			continue
+		}
+
+		if (expectConstDecl || expectClassConstDecl) && strings.HasPrefix(line, "const ") {
 			matches := cp.constDeclRegex.FindStringSubmatch(line)
 			if len(matches) == 3 {
 				name := matches[1]
@@ -58,6 +72,7 @@ func (cp *ConstantParser) parse(filename string) ([]PHPConstant, error) {
 					Value:      value,
 					IsIota:     value == "iota",
 					LineNumber: lineNumber,
+					ClassName:  currentClassName,
 				}
 
 				constant.Type = determineConstantType(value)
@@ -74,9 +89,12 @@ func (cp *ConstantParser) parse(filename string) ([]PHPConstant, error) {
 				return nil, fmt.Errorf("invalid constant declaration at line %d: %s", lineNumber, line)
 			}
 			expectConstDecl = false
-		} else if expectConstDecl && !strings.HasPrefix(line, "//") && line != "" {
+			expectClassConstDecl = false
+		} else if (expectConstDecl || expectClassConstDecl) && !strings.HasPrefix(line, "//") && line != "" {
 			// we expected a const declaration but found something else, reset
 			expectConstDecl = false
+			expectClassConstDecl = false
+			currentClassName = ""
 		}
 	}
 

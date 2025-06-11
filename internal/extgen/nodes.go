@@ -55,6 +55,7 @@ type PHPConstant struct {
 	Type       string // "int", "string", "bool", "float"
 	IsIota     bool
 	LineNumber int
+	ClassName  string // empty for global constants, set for class constants
 }
 
 // CValue returns the constant value in C-compatible format

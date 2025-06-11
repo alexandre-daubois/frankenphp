@@ -30,23 +30,24 @@ func (sg *StubGenerator) buildContent() string {
 	builder.WriteString("<?php\n\n/** @generate-class-entries */\n\n")
 
 	for _, constant := range sg.Generator.Constants {
-		if constant.IsIota {
-			// For iota constants, use @cvalue annotation to let PHP generate the value
-			builder.WriteString(fmt.Sprintf(`/**
+		if constant.ClassName == "" {
+			if constant.IsIota {
+				builder.WriteString(fmt.Sprintf(`/**
  * @var int
  * @cvalue %s
  */
 const %s = UNKNOWN;
 
 `, constant.Name, constant.Name))
-		} else {
-			phpType := getPhpTypeAnnotation(constant.Type)
-			builder.WriteString(fmt.Sprintf(`/**
+			} else {
+				phpType := getPhpTypeAnnotation(constant.Type)
+				builder.WriteString(fmt.Sprintf(`/**
  * @var %s
  */
 const %s = %s;
 
 `, phpType, constant.Name, constant.Value))
+			}
 		}
 	}
 
@@ -56,6 +57,28 @@ const %s = %s;
 
 	for _, class := range sg.Generator.Classes {
 		builder.WriteString(fmt.Sprintf("class %s {\n", class.Name))
+
+		for _, constant := range sg.Generator.Constants {
+			if constant.ClassName == class.Name {
+				if constant.IsIota {
+					builder.WriteString(fmt.Sprintf(`    /**
+     * @var int
+     * @cvalue %s
+     */
+    public const %s = UNKNOWN;
+
+`, constant.Name, constant.Name))
+				} else {
+					phpType := getPhpTypeAnnotation(constant.Type)
+					builder.WriteString(fmt.Sprintf(`    /**
+     * @var %s
+     */
+    public const %s = %s;
+
+`, phpType, constant.Name, constant.Value))
+				}
+			}
+		}
 
 		builder.WriteString("\n    public function __construct() {}\n")
 

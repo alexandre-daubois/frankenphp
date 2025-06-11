@@ -104,8 +104,13 @@ converted as memory representation of the underlying types are the same for both
 
 ## Declaring Constants
 
-The generator supports exporting Go constants to PHP using the `//export_php:const` directive. This allows you to
-share configuration values, status codes, and other constants between Go and PHP code:
+The generator supports exporting Go constants to PHP using two directives: `//export_php:const` for global constants
+and `//export_php:classconstant` for class constants. This allows you to share configuration values, status codes,
+and other constants between Go and PHP code.
+
+### Global Constants
+
+Use the `//export_php:const` directive to create global PHP constants:
 
 ```go
 //export_php:const
@@ -121,10 +126,49 @@ const STATUS_OK = iota
 const STATUS_ERROR = iota
 ```
 
+### Class Constants
+
+Use the `//export_php:classconstant ClassName` directive to create constants that belong to a specific PHP class:
+
+```go
+//export_php:classconstant User
+const STATUS_ACTIVE = 1
+
+//export_php:classconstant User
+const STATUS_INACTIVE = 0
+
+//export_php:classconstant User
+const ROLE_ADMIN = "admin"
+
+//export_php:classconstant Order
+const STATE_PENDING = iota
+
+//export_php:classconstant Order
+const STATE_PROCESSING = iota
+
+//export_php:classconstant Order
+const STATE_COMPLETED = iota
+```
+
+Class constants are accessible using the class name scope in PHP:
+
+```php
+<?php
+
+// Global constants
+echo MAX_CONNECTIONS;    // 100
+echo API_VERSION;        // "1.2.3"
+
+// Class constants
+echo User::STATUS_ACTIVE;    // 1
+echo User::ROLE_ADMIN;       // "admin"
+echo Order::STATE_PENDING;   // 0
+```
+
 The directive supports various value types including strings, integers, booleans, floats, and iota constants. When
-using `iota`, the generator automatically assigns sequential values (0, 1, 2, etc.). These constants become available
-in your PHP code as global constants. When using integers, different possible notation (binary, hex, octal) are supported
-and dumped as is in the PHP stub file.
+using `iota`, the generator automatically assigns sequential values (0, 1, 2, etc.). Global constants become available
+in your PHP code as global constants, while class constants are scoped to their respective classes. When using integers,
+different possible notation (binary, hex, octal) are supported and dumped as is in the PHP stub file.
 
 You can use constants just like you are used to in the Go code. For example, let's take the `repeat_this()` function
 we declared earlier and change the last argument to an integer:
@@ -136,13 +180,19 @@ import (
     "strings"
 )
 
-// export_php:const
+//export_php:const
 const STR_REVERSE = iota
 
-// export_php:const
+//export_php:const
 const STR_NORMAL = iota
 
-// export_php:function repeat_this(string $str, int $count, int $mode): string
+//export_php:classconstant StringProcessor
+const MODE_LOWERCASE = 1
+
+//export_php:classconstant StringProcessor
+const MODE_UPPERCASE = 2
+
+//export_php:function repeat_this(string $str, int $count, int $mode): string
 func repeat_this(s *C.zend_string, count int64, mode int) unsafe.Pointer {
     str := frankenphp.GoString(unsafe.Pointer(s))
 
@@ -157,14 +207,39 @@ func repeat_this(s *C.zend_string, count int64, mode int) unsafe.Pointer {
 
     return frankenphp.PHPString(result, false)
 }
+
+//export_php:class StringProcessor
+type StringProcessorStruct struct {
+    // internal fields
+}
+
+//export_php:method StringProcessor::process(string $input, int $mode): string
+func (sp *StringProcessorStruct) Process(input *C.zend_string, mode int64) unsafe.Pointer {
+    str := frankenphp.GoString(unsafe.Pointer(input))
+    
+    switch mode {
+    case MODE_LOWERCASE:
+        str = strings.ToLower(str)
+    case MODE_UPPERCASE:
+        str = strings.ToUpper(str)
+    }
+    
+    return frankenphp.PHPString(str, false)
+}
 ```
 
-After generating the extension, the new global constants are available to use:
+After generating the extension, both global and class constants are available to use:
 
 ```php
 <?php
 
-var_dump(repeat_this('Hello World', 5, \STR_REVERSE));
+// Using global constants
+var_dump(repeat_this('Hello World', 5, STR_REVERSE));
+
+// Using class constants
+$processor = new StringProcessor();
+echo $processor->process('Hello World', StringProcessor::MODE_LOWERCASE);  // "hello world"
+echo $processor->process('Hello World', StringProcessor::MODE_UPPERCASE);  // "HELLO WORLD"
 ```
 
 ## Declaring a Native PHP Class

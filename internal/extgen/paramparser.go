@@ -44,18 +44,30 @@ func (pp *ParameterParser) generateSingleParamDeclaration(param Parameter) []str
 	switch param.Type {
 	case "string":
 		decls = append(decls, fmt.Sprintf("zend_string *%s = NULL;", param.Name))
+		if param.IsNullable {
+			decls = append(decls, fmt.Sprintf("zend_bool %s_is_null = 0;", param.Name))
+		}
 	case "int":
 		defaultVal := pp.getDefaultValue(param, "0")
 		decls = append(decls, fmt.Sprintf("zend_long %s = %s;", param.Name, defaultVal))
+		if param.IsNullable {
+			decls = append(decls, fmt.Sprintf("zend_bool %s_is_null = 0;", param.Name))
+		}
 	case "float":
 		defaultVal := pp.getDefaultValue(param, "0.0")
 		decls = append(decls, fmt.Sprintf("double %s = %s;", param.Name, defaultVal))
+		if param.IsNullable {
+			decls = append(decls, fmt.Sprintf("zend_bool %s_is_null = 0;", param.Name))
+		}
 	case "bool":
 		defaultVal := pp.getDefaultValue(param, "0")
 		if param.HasDefault && param.DefaultValue == "true" {
 			defaultVal = "1"
 		}
 		decls = append(decls, fmt.Sprintf("zend_bool %s = %s;", param.Name, defaultVal))
+		if param.IsNullable {
+			decls = append(decls, fmt.Sprintf("zend_bool %s_is_null = 0;", param.Name))
+		}
 	}
 
 	return decls
@@ -93,17 +105,32 @@ func (pp *ParameterParser) generateParamParsing(params []Parameter, requiredCoun
 }
 
 func (pp *ParameterParser) generateParamParsingMacro(param Parameter) string {
-	switch param.Type {
-	case "string":
-		return fmt.Sprintf("\n        Z_PARAM_STR(%s)", param.Name)
-	case "int":
-		return fmt.Sprintf("\n        Z_PARAM_LONG(%s)", param.Name)
-	case "float":
-		return fmt.Sprintf("\n        Z_PARAM_DOUBLE(%s)", param.Name)
-	case "bool":
-		return fmt.Sprintf("\n        Z_PARAM_BOOL(%s)", param.Name)
-	default:
-		return ""
+	if param.IsNullable {
+		switch param.Type {
+		case "string":
+			return fmt.Sprintf("\n        Z_PARAM_STR_OR_NULL(%s, %s_is_null)", param.Name, param.Name)
+		case "int":
+			return fmt.Sprintf("\n        Z_PARAM_LONG_OR_NULL(%s, %s_is_null)", param.Name, param.Name)
+		case "float":
+			return fmt.Sprintf("\n        Z_PARAM_DOUBLE_OR_NULL(%s, %s_is_null)", param.Name, param.Name)
+		case "bool":
+			return fmt.Sprintf("\n        Z_PARAM_BOOL_OR_NULL(%s, %s_is_null)", param.Name, param.Name)
+		default:
+			return ""
+		}
+	} else {
+		switch param.Type {
+		case "string":
+			return fmt.Sprintf("\n        Z_PARAM_STR(%s)", param.Name)
+		case "int":
+			return fmt.Sprintf("\n        Z_PARAM_LONG(%s)", param.Name)
+		case "float":
+			return fmt.Sprintf("\n        Z_PARAM_DOUBLE(%s)", param.Name)
+		case "bool":
+			return fmt.Sprintf("\n        Z_PARAM_BOOL(%s)", param.Name)
+		default:
+			return ""
+		}
 	}
 }
 
@@ -121,16 +148,31 @@ func (pp *ParameterParser) generateGoCallParams(params []Parameter) string {
 }
 
 func (pp *ParameterParser) generateSingleGoCallParam(param Parameter) string {
-	switch param.Type {
-	case "string":
-		return param.Name
-	case "int":
-		return fmt.Sprintf("(long) %s", param.Name)
-	case "float":
-		return fmt.Sprintf("(double) %s", param.Name)
-	case "bool":
-		return fmt.Sprintf("(int) %s", param.Name)
-	default:
-		return param.Name
+	if param.IsNullable {
+		switch param.Type {
+		case "string":
+			return fmt.Sprintf("%s_is_null ? NULL : %s", param.Name, param.Name)
+		case "int":
+			return fmt.Sprintf("%s_is_null ? NULL : &%s", param.Name, param.Name)
+		case "float":
+			return fmt.Sprintf("%s_is_null ? NULL : &%s", param.Name, param.Name)
+		case "bool":
+			return fmt.Sprintf("%s_is_null ? NULL : &%s", param.Name, param.Name)
+		default:
+			return param.Name
+		}
+	} else {
+		switch param.Type {
+		case "string":
+			return param.Name
+		case "int":
+			return fmt.Sprintf("(long) %s", param.Name)
+		case "float":
+			return fmt.Sprintf("(double) %s", param.Name)
+		case "bool":
+			return fmt.Sprintf("(int) %s", param.Name)
+		default:
+			return param.Name
+		}
 	}
 }

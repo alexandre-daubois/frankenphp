@@ -132,6 +132,9 @@ func (gg *GoFileGenerator) generateMethodWrapper(method ClassMethod, class PHPCl
 			builder.WriteString(fmt.Sprintf(", %s *C.zend_string", param.Name))
 		} else {
 			goType := gg.phpTypeToGoType(param.Type)
+			if param.IsNullable {
+				goType = "*" + goType
+			}
 			builder.WriteString(fmt.Sprintf(", %s %s", param.Name, goType))
 		}
 	}

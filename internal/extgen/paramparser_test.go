@@ -77,11 +77,25 @@ func TestParameterParser_GenerateParamDeclarations(t *testing.T) {
 			expected: "    zend_string *message = NULL;",
 		},
 		{
+			name: "nullable string parameter",
+			params: []Parameter{
+				{Name: "message", Type: "string", HasDefault: false, IsNullable: true},
+			},
+			expected: "    zend_string *message = NULL;\n    zend_bool message_is_null = 0;",
+		},
+		{
 			name: "int parameter with default",
 			params: []Parameter{
 				{Name: "count", Type: "int", HasDefault: true, DefaultValue: "42"},
 			},
 			expected: "    zend_long count = 42;",
+		},
+		{
+			name: "nullable int parameter",
+			params: []Parameter{
+				{Name: "count", Type: "int", HasDefault: false, IsNullable: true},
+			},
+			expected: "    zend_long count = 0;\n    zend_bool count_is_null = 0;",
 		},
 		{
 			name: "bool parameter with true default",
@@ -91,11 +105,25 @@ func TestParameterParser_GenerateParamDeclarations(t *testing.T) {
 			expected: "    zend_bool enabled = 1;",
 		},
 		{
+			name: "nullable bool parameter",
+			params: []Parameter{
+				{Name: "enabled", Type: "bool", HasDefault: false, IsNullable: true},
+			},
+			expected: "    zend_bool enabled = 0;\n    zend_bool enabled_is_null = 0;",
+		},
+		{
 			name: "float parameter",
 			params: []Parameter{
 				{Name: "ratio", Type: "float", HasDefault: false},
 			},
 			expected: "    double ratio = 0.0;",
+		},
+		{
+			name: "nullable float parameter",
+			params: []Parameter{
+				{Name: "ratio", Type: "float", HasDefault: false, IsNullable: true},
+			},
+			expected: "    double ratio = 0.0;\n    zend_bool ratio_is_null = 0;",
 		},
 		{
 			name: "multiple parameters",
@@ -104,6 +132,14 @@ func TestParameterParser_GenerateParamDeclarations(t *testing.T) {
 				{Name: "count", Type: "int", HasDefault: true, DefaultValue: "10"},
 			},
 			expected: "    zend_string *name = NULL;\n    zend_long count = 10;",
+		},
+		{
+			name: "mixed nullable and non-nullable parameters",
+			params: []Parameter{
+				{Name: "name", Type: "string", HasDefault: false, IsNullable: false},
+				{Name: "count", Type: "int", HasDefault: false, IsNullable: true},
+			},
+			expected: "    zend_string *name = NULL;\n    zend_long count = 0;\n    zend_bool count_is_null = 0;",
 		},
 	}
 
@@ -227,9 +263,19 @@ func TestParameterParser_GenerateParamParsingMacro(t *testing.T) {
 			expected: "\n        Z_PARAM_STR(message)",
 		},
 		{
+			name:     "nullable string parameter",
+			param:    Parameter{Name: "message", Type: "string", IsNullable: true},
+			expected: "\n        Z_PARAM_STR_OR_NULL(message, message_is_null)",
+		},
+		{
 			name:     "int parameter",
 			param:    Parameter{Name: "count", Type: "int"},
 			expected: "\n        Z_PARAM_LONG(count)",
+		},
+		{
+			name:     "nullable int parameter",
+			param:    Parameter{Name: "count", Type: "int", IsNullable: true},
+			expected: "\n        Z_PARAM_LONG_OR_NULL(count, count_is_null)",
 		},
 		{
 			name:     "float parameter",
@@ -237,9 +283,19 @@ func TestParameterParser_GenerateParamParsingMacro(t *testing.T) {
 			expected: "\n        Z_PARAM_DOUBLE(ratio)",
 		},
 		{
+			name:     "nullable float parameter",
+			param:    Parameter{Name: "ratio", Type: "float", IsNullable: true},
+			expected: "\n        Z_PARAM_DOUBLE_OR_NULL(ratio, ratio_is_null)",
+		},
+		{
 			name:     "bool parameter",
 			param:    Parameter{Name: "enabled", Type: "bool"},
 			expected: "\n        Z_PARAM_BOOL(enabled)",
+		},
+		{
+			name:     "nullable bool parameter",
+			param:    Parameter{Name: "enabled", Type: "bool", IsNullable: true},
+			expected: "\n        Z_PARAM_BOOL_OR_NULL(enabled, enabled_is_null)",
 		},
 		{
 			name:     "unknown type",
@@ -311,9 +367,19 @@ func TestParameterParser_GenerateSingleGoCallParam(t *testing.T) {
 			expected: "message",
 		},
 		{
+			name:     "nullable string parameter",
+			param:    Parameter{Name: "message", Type: "string", IsNullable: true},
+			expected: "message_is_null ? NULL : message",
+		},
+		{
 			name:     "int parameter",
 			param:    Parameter{Name: "count", Type: "int"},
 			expected: "(long) count",
+		},
+		{
+			name:     "nullable int parameter",
+			param:    Parameter{Name: "count", Type: "int", IsNullable: true},
+			expected: "count_is_null ? NULL : &count",
 		},
 		{
 			name:     "float parameter",
@@ -321,9 +387,19 @@ func TestParameterParser_GenerateSingleGoCallParam(t *testing.T) {
 			expected: "(double) ratio",
 		},
 		{
+			name:     "nullable float parameter",
+			param:    Parameter{Name: "ratio", Type: "float", IsNullable: true},
+			expected: "ratio_is_null ? NULL : &ratio",
+		},
+		{
 			name:     "bool parameter",
 			param:    Parameter{Name: "enabled", Type: "bool"},
 			expected: "(int) enabled",
+		},
+		{
+			name:     "nullable bool parameter",
+			param:    Parameter{Name: "enabled", Type: "bool", IsNullable: true},
+			expected: "enabled_is_null ? NULL : &enabled",
 		},
 		{
 			name:     "unknown type",
@@ -356,14 +432,29 @@ func TestParameterParser_GenerateSingleParamDeclaration(t *testing.T) {
 			expected: []string{"zend_string *message = NULL;"},
 		},
 		{
+			name:     "nullable string parameter",
+			param:    Parameter{Name: "message", Type: "string", HasDefault: false, IsNullable: true},
+			expected: []string{"zend_string *message = NULL;", "zend_bool message_is_null = 0;"},
+		},
+		{
 			name:     "int parameter with default",
 			param:    Parameter{Name: "count", Type: "int", HasDefault: true, DefaultValue: "42"},
 			expected: []string{"zend_long count = 42;"},
 		},
 		{
+			name:     "nullable int parameter",
+			param:    Parameter{Name: "count", Type: "int", HasDefault: false, IsNullable: true},
+			expected: []string{"zend_long count = 0;", "zend_bool count_is_null = 0;"},
+		},
+		{
 			name:     "bool parameter with true default",
 			param:    Parameter{Name: "enabled", Type: "bool", HasDefault: true, DefaultValue: "true"},
 			expected: []string{"zend_bool enabled = 1;"},
+		},
+		{
+			name:     "nullable bool parameter",
+			param:    Parameter{Name: "enabled", Type: "bool", HasDefault: false, IsNullable: true},
+			expected: []string{"zend_bool enabled = 0;", "zend_bool enabled_is_null = 0;"},
 		},
 		{
 			name:     "bool parameter with false default",
@@ -374,6 +465,11 @@ func TestParameterParser_GenerateSingleParamDeclaration(t *testing.T) {
 			name:     "float parameter",
 			param:    Parameter{Name: "ratio", Type: "float", HasDefault: false},
 			expected: []string{"double ratio = 0.0;"},
+		},
+		{
+			name:     "nullable float parameter",
+			param:    Parameter{Name: "ratio", Type: "float", HasDefault: false, IsNullable: true},
+			expected: []string{"double ratio = 0.0;", "zend_bool ratio_is_null = 0;"},
 		},
 	}
 

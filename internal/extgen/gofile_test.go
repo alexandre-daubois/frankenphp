@@ -471,6 +471,105 @@ func debugPrint(msg string) {
 	}
 }
 
+func TestGoFileGenerator_MethodWrapperWithNullableParams(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "method_wrapper_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
+
+	sourceContent := `package main
+
+import "fmt"
+
+//export_php:class TestClass
+type TestStruct struct {
+	Name string
+}
+
+//export_php:method TestClass::processData(string $name, ?int $count, ?bool $enabled): string
+func (ts *TestStruct) ProcessData(name string, count *int64, enabled *bool) string {
+	result := fmt.Sprintf("name=%s", name)
+	if count != nil {
+		result += fmt.Sprintf(", count=%d", *count)
+	}
+	if enabled != nil {
+		result += fmt.Sprintf(", enabled=%t", *enabled)
+	}
+	return result
+}`
+
+	sourceFile := filepath.Join(tmpDir, "test.go")
+	if err := os.WriteFile(sourceFile, []byte(sourceContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	methods := []ClassMethod{
+		{
+			Name:       "ProcessData",
+			PHPName:    "processData",
+			ClassName:  "TestClass",
+			Signature:  "processData(string $name, ?int $count, ?bool $enabled): string",
+			ReturnType: "string",
+			Params: []Parameter{
+				{Name: "name", Type: "string", IsNullable: false},
+				{Name: "count", Type: "int", IsNullable: true},
+				{Name: "enabled", Type: "bool", IsNullable: true},
+			},
+			GoFunction: `func (ts *TestStruct) ProcessData(name string, count *int64, enabled *bool) string {
+	result := fmt.Sprintf("name=%s", name)
+	if count != nil {
+		result += fmt.Sprintf(", count=%d", *count)
+	}
+	if enabled != nil {
+		result += fmt.Sprintf(", enabled=%t", *enabled)
+	}
+	return result
+}`,
+		},
+	}
+
+	classes := []PHPClass{
+		{
+			Name:     "TestClass",
+			GoStruct: "TestStruct",
+			Methods:  methods,
+		},
+	}
+
+	generator := &Generator{
+		BaseName:   "nullable_test",
+		SourceFile: sourceFile,
+		Classes:    classes,
+		BuildDir:   tmpDir,
+	}
+
+	goGen := GoFileGenerator{generator}
+	content, err := goGen.buildContent()
+	if err != nil {
+		t.Fatalf("buildContent() failed: %v", err)
+	}
+
+	expectedWrapperSignature := "func ProcessData_wrapper(handle C.uintptr_t, name *C.zend_string, count *int64, enabled *bool)"
+	if !strings.Contains(content, expectedWrapperSignature) {
+		t.Errorf("Generated content should contain wrapper with nullable pointer types: %s\nGenerated:\n%s", expectedWrapperSignature, content)
+	}
+
+	expectedCall := "structObj.ProcessData(name, count, enabled)"
+	if !strings.Contains(content, expectedCall) {
+		t.Errorf("Generated content should contain correct method call: %s\nGenerated:\n%s", expectedCall, content)
+	}
+
+	exportDirective := "//export ProcessData_wrapper"
+	if !strings.Contains(content, exportDirective) {
+		t.Errorf("Generated content should contain export directive: %s", exportDirective)
+	}
+}
+
 func createTempSourceFile(t *testing.T, content string) string {
 	tmpfile, err := os.CreateTemp("", "source*.go")
 	if err != nil {
@@ -478,9 +577,12 @@ func createTempSourceFile(t *testing.T, content string) string {
 	}
 
 	if _, err := tmpfile.Write([]byte(content)); err != nil {
+		tmpfile.Close()
 		t.Fatal(err)
 	}
-	tmpfile.Close()
+	if err := tmpfile.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	return tmpfile.Name()
 }

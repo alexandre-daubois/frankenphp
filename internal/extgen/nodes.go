@@ -84,23 +84,32 @@ func (m ClassMethod) CGOReturnType() string {
 
 // CType returns the C type for parameter
 func (p Parameter) CType() string {
-	return phpTypeToCType(p.Type)
+	baseType := phpTypeToCType(p.Type)
+	// string is provided by a zend_string*, nullable by nature
+	if p.IsNullable && p.Type != "string" {
+		return baseType + "*"
+	}
+	return baseType
 }
 
 // CGOType returns the CGO type for parameter
 func (p Parameter) CGOType() string {
-	return phpTypeToCGOType(p.Type)
+	baseType := phpTypeToCGOType(p.Type)
+	if p.IsNullable && p.Type != "string" {
+		return "*" + baseType
+	}
+	return baseType
 }
 
 // phpTypeToCType converts PHP types to C types for headers
 func phpTypeToCType(phpType string) string {
 	typeMap := map[string]string{
 		"void":   "void",
-		"string": "void*", // Use void* for strings, CGO will handle conversion
+		"string": "void*",
 		"int":    "int64_t",
 		"float":  "double",
-		"bool":   "int",   // C uses int for bool
-		"array":  "void*", // Arrays are complex, use void*
+		"bool":   "int",
+		"array":  "void*",
 		"mixed":  "void*",
 	}
 
@@ -108,7 +117,7 @@ func phpTypeToCType(phpType string) string {
 		return cType
 	}
 
-	return "void*" // fallback
+	return "void*"
 }
 
 // phpTypeToCGOType converts PHP types to CGO types for headers
@@ -116,10 +125,10 @@ func phpTypeToCGOType(phpType string) string {
 	typeMap := map[string]string{
 		"void":   "void",
 		"string": "zend_string*",
-		"int":    "zend_long",
-		"float":  "float",
-		"bool":   "bool",    // CGO uses uint8 for bool
-		"array":  "GoSlice", // Arrays become slices in Go
+		"int":    "int64",
+		"float":  "float64",
+		"bool":   "bool",
+		"array":  "GoSlice",
 		"mixed":  "GoInterface",
 	}
 
@@ -127,5 +136,5 @@ func phpTypeToCGOType(phpType string) string {
 		return cgoType
 	}
 
-	return "GoInterface" // fallback to interface{}
+	return "GoInterface"
 }

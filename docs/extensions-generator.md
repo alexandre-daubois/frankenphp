@@ -80,14 +80,17 @@ directly used. This is maybe the hardest part when it comes to writing extension
 internals of the Zend Engine and how variables are stored internally in PHP. This table summarizes what you need to
 know:
 
-| PHP type | Go type       | Direct conversion | C to Go helper        | Go to C helper         | Class Methods Support |
-|----------|---------------|-------------------|-----------------------|------------------------|----------------------|
-| `int`    | `int64`       | ✅                 | -                     | -                      | ✅                    |
-| `float`  | `float64`     | ✅                 | -                     | -                      | ✅                    |
-| `bool`   | `bool`        | ✅                 | -                     | -                      | ✅                    |
-| `string` | `string`      | ❌                 | frankenphp.GoString() | frankenphp.PHPString() | ✅                    |
-| `array`  | `slice`/`map` | ❌                 | _Not yet implemented_ | _Not yet implemented_  | ❌                    |
-| `object` | `struct`      | ❌                 | _Not yet implemented_ | _Not yet implemented_  | ❌                    |
+| PHP type           | Go type          | Direct conversion | C to Go helper        | Go to C helper         | Class Methods Support |
+|--------------------|------------------|-------------------|-----------------------|------------------------|-----------------------|
+| `int`              | `int64`          | ✅                 | -                     | -                      | ✅                     |
+| `?int`             | `*int64`         | ✅                 | -                     | -                      | ✅                     |
+| `float`            | `float64`        | ✅                 | -                     | -                      | ✅                     |
+| `?float`           | `*float64`       | ✅                 | -                     | -                      | ✅                     |
+| `bool`             | `bool`           | ✅                 | -                     | -                      | ✅                     |
+| `?bool`            | `*bool`          | ✅                 | -                     | -                      | ✅                     |
+| `string`/`?string` | `*C.zend_string` | ❌                 | frankenphp.GoString() | frankenphp.PHPString() | ✅                     |
+| `array`            | `slice`/`map`    | ❌                 | _Not yet implemented_ | _Not yet implemented_  | ❌                     |
+| `object`           | `struct`         | ❌                 | _Not yet implemented_ | _Not yet implemented_  | ❌                     |
 
 > [!NOTE]
 > This table is not exhaustive yet and will be completed as the FrankenPHP types API gets more complete.
@@ -223,12 +226,45 @@ func (us *UserStruct) SetNamePrefix(prefix *C.zend_string) {
 }
 ```
 
+### Nullable Parameters
+
+The generator supports nullable parameters using the `?` prefix in PHP signatures. When a parameter is nullable, it
+becomes a pointer in your Go function, allowing you to check if the value was `null` in PHP:
+
+```go
+//export_php:method User::updateInfo(?string $name, ?int $age, ?bool $active): void
+func (us *UserStruct) UpdateInfo(name *C.zend_string, age *int64, active *bool) {
+    // Check if name was provided (not null)
+    if name != nil {
+        us.Name = frankenphp.GoString(unsafe.Pointer(name))
+    }
+    
+    // Check if age was provided (not null)
+    if age != nil {
+        us.Age = int(*age)
+    }
+    
+    // Check if active was provided (not null)
+    if active != nil {
+        us.Active = *active
+    }
+}
+```
+
+**Key points about nullable parameters:**
+
+- **Nullable primitive types** (`?int`, `?float`, `?bool`) become pointers (`*int64`, `*float64`, `*bool`) in Go
+- **Nullable strings** (`?string`) remain as `*C.zend_string` but can be `nil`
+- **Check for `nil`** before dereferencing pointer values
+- **PHP `null` becomes Go `nil`** - when PHP passes `null`, your Go function receives a `nil` pointer
+
 > [!WARNING]
 > **Method Parameter and Return Type Limitations**
 > 
 > Currently, class methods have the following limitations:
 > - **Arrays and objects are not supported** as parameter types or return types
 > - Only primitive types are supported: `string`, `int`, `float`, `bool` and `void` (for return type)
+> - **Nullable types are fully supported** for all primitive types (`?string`, `?int`, `?float`, `?bool`)
 
 After generating the extension, you can use the class and its methods in PHP. Note that you **cannot access properties directly**:
 
@@ -242,6 +278,11 @@ $user->setAge(25);
 echo $user->getName();           // Output: (empty, default value)
 echo $user->getAge();            // Output: 25
 $user->setNamePrefix("Employee");
+
+// ✅ This also works - nullable parameters
+$user->updateInfo("John", 30, true);        // All parameters provided
+$user->updateInfo("Jane", null, false);     // Age is null
+$user->updateInfo(null, 25, null);          // Name and active are null
 
 // ❌ This will NOT work - direct property access
 // echo $user->name;             // Error: Cannot access private property

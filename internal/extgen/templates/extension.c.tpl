@@ -95,33 +95,39 @@ PHP_METHOD({{.ClassName}}, {{.PHPName}}) {
     
     {{if .Params}}
     {{range $i, $param := .Params}}
-    {{if eq $param.Type "string"}}zend_string *{{$param.Name}}_zstr;{{end}}
-    {{if eq $param.Type "int"}}zend_long {{$param.Name}}_long;{{end}}
-    {{if eq $param.Type "float"}}double {{$param.Name}}_double;{{end}}
-    {{if eq $param.Type "bool"}}zend_bool {{$param.Name}}_bool;{{end}}
+    {{if eq $param.Type "string"}}zend_string *{{$param.Name}} = NULL;{{end}}
+    {{if eq $param.Type "int"}}zend_long {{$param.Name}} = {{if $param.HasDefault}}{{$param.DefaultValue}}{{else}}0{{end}};{{end}}
+    {{if eq $param.Type "float"}}double {{$param.Name}} = {{if $param.HasDefault}}{{$param.DefaultValue}}{{else}}0.0{{end}};{{end}}
+    {{if eq $param.Type "bool"}}zend_bool {{$param.Name}} = {{if $param.HasDefault}}{{if eq $param.DefaultValue "true"}}1{{else}}0{{end}}{{else}}0{{end}};{{end}}
     {{end}}
     
-    if (zend_parse_parameters(ZEND_NUM_ARGS(), "{{range .Params}}{{if eq .Type "string"}}S{{else if eq .Type "int"}}l{{else if eq .Type "float"}}d{{else if eq .Type "bool"}}b{{end}}{{end}}"{{range .Params}}, {{if eq .Type "string"}}&{{.Name}}_zstr{{else if eq .Type "int"}}&{{.Name}}_long{{else if eq .Type "float"}}&{{.Name}}_double{{else if eq .Type "bool"}}&{{.Name}}_bool{{end}}{{end}}) == FAILURE) {
+    {{$requiredCount := 0}}{{range .Params}}{{if not .HasDefault}}{{$requiredCount = inc $requiredCount}}{{end}}{{end}}
+    ZEND_PARSE_PARAMETERS_START({{$requiredCount}}, {{len .Params}})
+        {{$optionalStarted := false}}{{range .Params}}{{if .HasDefault}}{{if not $optionalStarted}}Z_PARAM_OPTIONAL
+        {{$optionalStarted = true}}{{end}}{{end}}{{if eq .Type "string"}}Z_PARAM_STR({{.Name}}){{else if eq .Type "int"}}Z_PARAM_LONG({{.Name}}){{else if eq .Type "float"}}Z_PARAM_DOUBLE({{.Name}}){{else if eq .Type "bool"}}Z_PARAM_BOOL({{.Name}}){{end}}
+        {{end}}ZEND_PARSE_PARAMETERS_END();
+    {{else}}
+    if (zend_parse_parameters_none() == FAILURE) {
         RETURN_THROWS();
     }
     {{end}}
     
     {{- if ne .ReturnType "void"}}
     {{- if eq .ReturnType "string"}}
-    zend_string* result = {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
+    zend_string* result = {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{.Name}}{{end}}{{end}});
     RETURN_STR(result);
     {{- else if eq .ReturnType "int"}}
-    zend_long result = {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
+    zend_long result = {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, (long){{.Name}}{{end}}{{end}});
     RETURN_LONG(result);
     {{- else if eq .ReturnType "float"}}
-    float result = {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
+    double result = {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, (double){{.Name}}{{end}}{{end}});
     RETURN_DOUBLE(result);
     {{- else if eq .ReturnType "bool"}}
-    bool result = {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
+    int result = {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, (int){{.Name}}{{end}}{{end}});
     RETURN_BOOL(result);
     {{- end}}
     {{- else}}
-    {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
+    {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}{{else if eq .Type "int"}}(long){{.Name}}{{else if eq .Type "float"}}(double){{.Name}}{{else if eq .Type "bool"}}(int){{.Name}}{{end}}{{end}}{{end}});
     {{- end}}
 }
 {{end}}
@@ -170,21 +176,21 @@ zend_module_entry {{.BaseName}}_module_entry = {STANDARD_MODULE_HEADER,
                                          STANDARD_MODULE_PROPERTIES};
 
 PHPAPI int register_internal_extensions(void) {
-  if (original_php_register_internal_extensions_func != NULL &&
-      original_php_register_internal_extensions_func() != SUCCESS) {
-    return FAILURE;
-  }
+    if (original_php_register_internal_extensions_func != NULL &&
+        original_php_register_internal_extensions_func() != SUCCESS) {
+        return FAILURE;
+    }
 
-  zend_module_entry *module = &{{.BaseName}}_module_entry;
-  if (zend_register_internal_module(module) == NULL) {
-    return FAILURE;
-  };
+    zend_module_entry *module = &{{.BaseName}}_module_entry;
+    if (zend_register_internal_module(module) == NULL) {
+        return FAILURE;
+    };
 
-  return SUCCESS;
+    return SUCCESS;
 }
 
 void register_extension() {
-  original_php_register_internal_extensions_func =
-      php_register_internal_extensions_func;
-  php_register_internal_extensions_func = register_internal_extensions;
+    original_php_register_internal_extensions_func =
+        php_register_internal_extensions_func;
+    php_register_internal_extensions_func = register_internal_extensions;
 }

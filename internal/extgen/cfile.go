@@ -44,7 +44,7 @@ func (cg *CFileGenerator) buildContent() (string, error) {
 	builder.WriteString(templateContent)
 
 	for _, fn := range cg.generator.Functions {
-		fnGen := PHPFuncGenerator{}
+		fnGen := PHPFuncGenerator{paramParser: &ParameterParser{}}
 		builder.WriteString(fnGen.generate(fn))
 	}
 
@@ -54,6 +54,9 @@ func (cg *CFileGenerator) buildContent() (string, error) {
 func (cg *CFileGenerator) getTemplateContent() (string, error) {
 	funcMap := template.FuncMap{
 		"ToLower": strcase.ToLowerCamel,
+		"inc": func(i int) int {
+			return i + 1
+		},
 	}
 	tmpl, err := template.New("cfile").Funcs(funcMap).Parse(cFileContent)
 	if err != nil {

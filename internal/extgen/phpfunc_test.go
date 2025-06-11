@@ -162,10 +162,10 @@ func TestPHPFunctionGenerator_GenerateParamDeclarations(t *testing.T) {
 		},
 	}
 
-	generator := PHPFuncGenerator{}
+	parser := ParameterParser{}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := generator.generateParamDeclarations(tt.params)
+			result := parser.generateParamDeclarations(tt.params)
 
 			for _, expected := range tt.contains {
 				if !strings.Contains(result, expected) {
@@ -282,10 +282,10 @@ func TestPHPFunctionGenerator_GenerateGoCallParams(t *testing.T) {
 		},
 	}
 
-	generator := PHPFuncGenerator{}
+	parser := ParameterParser{}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := generator.generateGoCallParams(tt.params)
+			result := parser.generateGoCallParams(tt.params)
 
 			if result != tt.expected {
 				t.Errorf("generateGoCallParams() = %v, want %v", result, tt.expected)
@@ -336,10 +336,10 @@ func TestPHPFunctionGenerator_AnalyzeParameters(t *testing.T) {
 		},
 	}
 
-	generator := PHPFuncGenerator{}
+	parser := ParameterParser{}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			info := generator.analyzeParameters(tt.params)
+			info := parser.analyzeParameters(tt.params)
 
 			if info.RequiredCount != tt.expectedReq {
 				t.Errorf("analyzeParameters() RequiredCount = %v, want %v", info.RequiredCount, tt.expectedReq)

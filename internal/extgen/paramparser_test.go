@@ -1,0 +1,440 @@
+package extgen
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestParameterParser_AnalyzeParameters(t *testing.T) {
+	pp := &ParameterParser{}
+
+	tests := []struct {
+		name     string
+		params   []Parameter
+		expected ParameterInfo
+	}{
+		{
+			name:   "no parameters",
+			params: []Parameter{},
+			expected: ParameterInfo{
+				RequiredCount: 0,
+				TotalCount:    0,
+			},
+		},
+		{
+			name: "all required parameters",
+			params: []Parameter{
+				{Name: "name", Type: "string", HasDefault: false},
+				{Name: "count", Type: "int", HasDefault: false},
+			},
+			expected: ParameterInfo{
+				RequiredCount: 2,
+				TotalCount:    2,
+			},
+		},
+		{
+			name: "mixed required and optional parameters",
+			params: []Parameter{
+				{Name: "name", Type: "string", HasDefault: false},
+				{Name: "count", Type: "int", HasDefault: true, DefaultValue: "10"},
+				{Name: "enabled", Type: "bool", HasDefault: true, DefaultValue: "true"},
+			},
+			expected: ParameterInfo{
+				RequiredCount: 1,
+				TotalCount:    3,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := pp.analyzeParameters(tt.params)
+			if result != tt.expected {
+				t.Errorf("analyzeParameters() = %+v, want %+v", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParameterParser_GenerateParamDeclarations(t *testing.T) {
+	pp := &ParameterParser{}
+
+	tests := []struct {
+		name     string
+		params   []Parameter
+		expected string
+	}{
+		{
+			name:     "no parameters",
+			params:   []Parameter{},
+			expected: "",
+		},
+		{
+			name: "string parameter",
+			params: []Parameter{
+				{Name: "message", Type: "string", HasDefault: false},
+			},
+			expected: "    zend_string *message = NULL;",
+		},
+		{
+			name: "int parameter with default",
+			params: []Parameter{
+				{Name: "count", Type: "int", HasDefault: true, DefaultValue: "42"},
+			},
+			expected: "    zend_long count = 42;",
+		},
+		{
+			name: "bool parameter with true default",
+			params: []Parameter{
+				{Name: "enabled", Type: "bool", HasDefault: true, DefaultValue: "true"},
+			},
+			expected: "    zend_bool enabled = 1;",
+		},
+		{
+			name: "float parameter",
+			params: []Parameter{
+				{Name: "ratio", Type: "float", HasDefault: false},
+			},
+			expected: "    double ratio = 0.0;",
+		},
+		{
+			name: "multiple parameters",
+			params: []Parameter{
+				{Name: "name", Type: "string", HasDefault: false},
+				{Name: "count", Type: "int", HasDefault: true, DefaultValue: "10"},
+			},
+			expected: "    zend_string *name = NULL;\n    zend_long count = 10;",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := pp.generateParamDeclarations(tt.params)
+			if result != tt.expected {
+				t.Errorf("generateParamDeclarations() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParameterParser_GenerateParamParsing(t *testing.T) {
+	pp := &ParameterParser{}
+
+	tests := []struct {
+		name          string
+		params        []Parameter
+		requiredCount int
+		expected      string
+	}{
+		{
+			name:          "no parameters",
+			params:        []Parameter{},
+			requiredCount: 0,
+			expected: `    if (zend_parse_parameters_none() == FAILURE) {
+        RETURN_THROWS();
+    }`,
+		},
+		{
+			name: "single required string parameter",
+			params: []Parameter{
+				{Name: "message", Type: "string", HasDefault: false},
+			},
+			requiredCount: 1,
+			expected: `    ZEND_PARSE_PARAMETERS_START(1, 1)
+        Z_PARAM_STR(message)
+    ZEND_PARSE_PARAMETERS_END();`,
+		},
+		{
+			name: "mixed required and optional parameters",
+			params: []Parameter{
+				{Name: "name", Type: "string", HasDefault: false},
+				{Name: "count", Type: "int", HasDefault: true, DefaultValue: "10"},
+				{Name: "enabled", Type: "bool", HasDefault: true, DefaultValue: "true"},
+			},
+			requiredCount: 1,
+			expected: `    ZEND_PARSE_PARAMETERS_START(1, 3)
+        Z_PARAM_STR(name)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_LONG(count)
+        Z_PARAM_BOOL(enabled)
+    ZEND_PARSE_PARAMETERS_END();`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := pp.generateParamParsing(tt.params, tt.requiredCount)
+			if result != tt.expected {
+				t.Errorf("generateParamParsing() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParameterParser_GenerateGoCallParams(t *testing.T) {
+	pp := &ParameterParser{}
+
+	tests := []struct {
+		name     string
+		params   []Parameter
+		expected string
+	}{
+		{
+			name:     "no parameters",
+			params:   []Parameter{},
+			expected: "",
+		},
+		{
+			name: "single string parameter",
+			params: []Parameter{
+				{Name: "message", Type: "string"},
+			},
+			expected: "message",
+		},
+		{
+			name: "multiple parameters of different types",
+			params: []Parameter{
+				{Name: "name", Type: "string"},
+				{Name: "count", Type: "int"},
+				{Name: "ratio", Type: "float"},
+				{Name: "enabled", Type: "bool"},
+			},
+			expected: "name, (long) count, (double) ratio, (int) enabled",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := pp.generateGoCallParams(tt.params)
+			if result != tt.expected {
+				t.Errorf("generateGoCallParams() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParameterParser_GenerateParamParsingMacro(t *testing.T) {
+	pp := &ParameterParser{}
+
+	tests := []struct {
+		name     string
+		param    Parameter
+		expected string
+	}{
+		{
+			name:     "string parameter",
+			param:    Parameter{Name: "message", Type: "string"},
+			expected: "\n        Z_PARAM_STR(message)",
+		},
+		{
+			name:     "int parameter",
+			param:    Parameter{Name: "count", Type: "int"},
+			expected: "\n        Z_PARAM_LONG(count)",
+		},
+		{
+			name:     "float parameter",
+			param:    Parameter{Name: "ratio", Type: "float"},
+			expected: "\n        Z_PARAM_DOUBLE(ratio)",
+		},
+		{
+			name:     "bool parameter",
+			param:    Parameter{Name: "enabled", Type: "bool"},
+			expected: "\n        Z_PARAM_BOOL(enabled)",
+		},
+		{
+			name:     "unknown type",
+			param:    Parameter{Name: "unknown", Type: "unknown"},
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := pp.generateParamParsingMacro(tt.param)
+			if result != tt.expected {
+				t.Errorf("generateParamParsingMacro() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParameterParser_GetDefaultValue(t *testing.T) {
+	pp := &ParameterParser{}
+
+	tests := []struct {
+		name     string
+		param    Parameter
+		fallback string
+		expected string
+	}{
+		{
+			name:     "parameter without default",
+			param:    Parameter{Name: "count", Type: "int", HasDefault: false},
+			fallback: "0",
+			expected: "0",
+		},
+		{
+			name:     "parameter with default value",
+			param:    Parameter{Name: "count", Type: "int", HasDefault: true, DefaultValue: "42"},
+			fallback: "0",
+			expected: "42",
+		},
+		{
+			name:     "parameter with empty default value",
+			param:    Parameter{Name: "count", Type: "int", HasDefault: true, DefaultValue: ""},
+			fallback: "0",
+			expected: "0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := pp.getDefaultValue(tt.param, tt.fallback)
+			if result != tt.expected {
+				t.Errorf("getDefaultValue() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParameterParser_GenerateSingleGoCallParam(t *testing.T) {
+	pp := &ParameterParser{}
+
+	tests := []struct {
+		name     string
+		param    Parameter
+		expected string
+	}{
+		{
+			name:     "string parameter",
+			param:    Parameter{Name: "message", Type: "string"},
+			expected: "message",
+		},
+		{
+			name:     "int parameter",
+			param:    Parameter{Name: "count", Type: "int"},
+			expected: "(long) count",
+		},
+		{
+			name:     "float parameter",
+			param:    Parameter{Name: "ratio", Type: "float"},
+			expected: "(double) ratio",
+		},
+		{
+			name:     "bool parameter",
+			param:    Parameter{Name: "enabled", Type: "bool"},
+			expected: "(int) enabled",
+		},
+		{
+			name:     "unknown type",
+			param:    Parameter{Name: "unknown", Type: "unknown"},
+			expected: "unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := pp.generateSingleGoCallParam(tt.param)
+			if result != tt.expected {
+				t.Errorf("generateSingleGoCallParam() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestParameterParser_GenerateSingleParamDeclaration(t *testing.T) {
+	pp := &ParameterParser{}
+
+	tests := []struct {
+		name     string
+		param    Parameter
+		expected []string
+	}{
+		{
+			name:     "string parameter",
+			param:    Parameter{Name: "message", Type: "string", HasDefault: false},
+			expected: []string{"zend_string *message = NULL;"},
+		},
+		{
+			name:     "int parameter with default",
+			param:    Parameter{Name: "count", Type: "int", HasDefault: true, DefaultValue: "42"},
+			expected: []string{"zend_long count = 42;"},
+		},
+		{
+			name:     "bool parameter with true default",
+			param:    Parameter{Name: "enabled", Type: "bool", HasDefault: true, DefaultValue: "true"},
+			expected: []string{"zend_bool enabled = 1;"},
+		},
+		{
+			name:     "bool parameter with false default",
+			param:    Parameter{Name: "disabled", Type: "bool", HasDefault: true, DefaultValue: "false"},
+			expected: []string{"zend_bool disabled = false;"},
+		},
+		{
+			name:     "float parameter",
+			param:    Parameter{Name: "ratio", Type: "float", HasDefault: false},
+			expected: []string{"double ratio = 0.0;"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := pp.generateSingleParamDeclaration(tt.param)
+			if len(result) != len(tt.expected) {
+				t.Errorf("generateSingleParamDeclaration() returned %d items, want %d", len(result), len(tt.expected))
+				return
+			}
+			for i, decl := range result {
+				if decl != tt.expected[i] {
+					t.Errorf("generateSingleParamDeclaration()[%d] = %q, want %q", i, decl, tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
+// Test integration: full parameter parsing workflow
+func TestParameterParser_Integration(t *testing.T) {
+	pp := &ParameterParser{}
+
+	params := []Parameter{
+		{Name: "name", Type: "string", HasDefault: false},
+		{Name: "count", Type: "int", HasDefault: true, DefaultValue: "10"},
+		{Name: "enabled", Type: "bool", HasDefault: true, DefaultValue: "true"},
+	}
+
+	// Test parameter analysis
+	info := pp.analyzeParameters(params)
+	if info.RequiredCount != 1 || info.TotalCount != 3 {
+		t.Errorf("Expected RequiredCount=1, TotalCount=3, got RequiredCount=%d, TotalCount=%d", info.RequiredCount, info.TotalCount)
+	}
+
+	// Test parameter declarations generation
+	declarations := pp.generateParamDeclarations(params)
+	expectedDeclarations := []string{
+		"zend_string *name = NULL;",
+		"zend_long count = 10;",
+		"zend_bool enabled = 1;",
+	}
+	for _, expected := range expectedDeclarations {
+		if !strings.Contains(declarations, expected) {
+			t.Errorf("Expected declaration %q not found in %q", expected, declarations)
+		}
+	}
+
+	// Test parameter parsing generation
+	parsing := pp.generateParamParsing(params, info.RequiredCount)
+	if !strings.Contains(parsing, "ZEND_PARSE_PARAMETERS_START(1, 3)") {
+		t.Errorf("Expected ZEND_PARSE_PARAMETERS_START(1, 3) in %q", parsing)
+	}
+	if !strings.Contains(parsing, "Z_PARAM_OPTIONAL") {
+		t.Errorf("Expected Z_PARAM_OPTIONAL in %q", parsing)
+	}
+
+	// Test Go call parameters generation
+	goCallParams := pp.generateGoCallParams(params)
+	expected := "name, (long) count, (int) enabled"
+	if goCallParams != expected {
+		t.Errorf("generateGoCallParams() = %q, want %q", goCallParams, expected)
+	}
+}

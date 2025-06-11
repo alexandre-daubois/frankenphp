@@ -7,9 +7,8 @@
 #include "_cgo_export.h"
 
 static int (*original_php_register_internal_extensions_func)(void) = NULL;
+{{- if .Classes}}
 
-{{if .Classes}}
-/* Object structure for class instances */
 static zend_object_handlers object_handlers_{{.BaseName}};
 
 typedef struct {
@@ -53,12 +52,12 @@ static void {{.BaseName}}_free_object(zend_object *object) {
 static zend_function *{{.BaseName}}_get_method(zend_object **object, zend_string *method, const zval *key) {
     {{.BaseName}}_object *intern = {{.BaseName}}_object_from_obj(*object);
     
-    {{range .Classes}}{{range .Methods}}
+    {{- range .Classes}}{{range .Methods}}
     if (strcmp(intern->class_name, "{{.ClassName}}") == 0 && 
         strcmp(ZSTR_VAL(method), "{{.PHPName}}") == 0) {
-        /* handled by generated method wrapper */
         return zend_std_get_method(object, method, key);
-    }{{end}}{{end}}
+    }
+    {{- end}}{{end}}
     
     return zend_std_get_method(object, method, key);
 }
@@ -69,9 +68,10 @@ void init_object_handlers() {
     object_handlers_{{.BaseName}}.free_obj = {{.BaseName}}_free_object;
     object_handlers_{{.BaseName}}.offset = offsetof({{.BaseName}}_object, std);
 }
-{{end}}
+{{- end}}
 
-{{range .Classes}}static zend_class_entry *{{.Name}}_ce = NULL;
+{{- range .Classes}}
+static zend_class_entry *{{.Name}}_ce = NULL;
 
 PHP_METHOD({{.Name}}, __construct) {
     if (zend_parse_parameters_none() == FAILURE) {
@@ -83,7 +83,8 @@ PHP_METHOD({{.Name}}, __construct) {
     intern->go_handle = create_{{.GoStruct}}_object();
 }
 
-{{range .Methods}}
+{{- range .Methods}}
+
 PHP_METHOD({{.ClassName}}, {{.PHPName}}) {
     {{$.BaseName}}_object *intern = {{$.BaseName}}_object_from_obj(Z_OBJ_P(ZEND_THIS));
     
@@ -105,49 +106,54 @@ PHP_METHOD({{.ClassName}}, {{.PHPName}}) {
     }
     {{end}}
     
-    {{if ne .ReturnType "void"}}
-    {{if eq .ReturnType "string"}}
+    {{- if ne .ReturnType "void"}}
+    {{- if eq .ReturnType "string"}}
     zend_string* result = {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
     RETURN_STR(result);
-    {{else if eq .ReturnType "int"}}
+    {{- else if eq .ReturnType "int"}}
     zend_long result = {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
     RETURN_LONG(result);
-    {{else if eq .ReturnType "float"}}
+    {{- else if eq .ReturnType "float"}}
     float result = {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
     RETURN_DOUBLE(result);
-    {{else if eq .ReturnType "bool"}}
+    {{- else if eq .ReturnType "bool"}}
     bool result = {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
     RETURN_BOOL(result);
-    {{end}}
-    {{else}}
+    {{- end}}
+    {{- else}}
     {{.Name}}_wrapper(intern->go_handle{{if .Params}}{{range .Params}}, {{if eq .Type "string"}}{{.Name}}_zstr{{else if eq .Type "int"}}(zend_long){{.Name}}_long{{else if eq .Type "float"}}(float){{.Name}}_double{{else if eq .Type "bool"}}(bool){{.Name}}_bool{{end}}{{end}}{{end}});
-    {{end}}
+    {{- end}}
 }
 {{end}}
 {{end}}
 
-{{if .Classes}}
+{{- if .Classes}}
+
 void register_all_classes() {
     init_object_handlers();
     
-    {{range .Classes}}{{.Name}}_ce = register_class_{{.Name}}();
+    {{- range .Classes}}
+    {{.Name}}_ce = register_class_{{.Name}}();
     if (!{{.Name}}_ce) {
         php_error_docref(NULL, E_ERROR, "Failed to register class {{.Name}}");
         return;
     }
     {{.Name}}_ce->create_object = {{$.BaseName}}_create_object;
-{{end}}
-}{{end}}
+    {{- end}}
+}
+{{- end}}
 
 PHP_MINIT_FUNCTION({{.BaseName}}) {
-    {{if .Classes}}register_all_classes();{{end}}
+    {{- if .Classes}}register_all_classes();{{end}}
     
-    {{range .Constants}}{{if .IsIota}}REGISTER_LONG_CONSTANT("{{.Name}}", {{.Name}}, CONST_CS | CONST_PERSISTENT);
-    {{else if eq .Type "string"}}REGISTER_STRING_CONSTANT("{{.Name}}", {{.CValue}}, CONST_CS | CONST_PERSISTENT);
-    {{else if eq .Type "bool"}}REGISTER_LONG_CONSTANT("{{.Name}}", {{if eq .Value "true"}}1{{else}}0{{end}}, CONST_CS | CONST_PERSISTENT);
-    {{else if eq .Type "float"}}REGISTER_DOUBLE_CONSTANT("{{.Name}}", {{.CValue}}, CONST_CS | CONST_PERSISTENT);
-    {{else}}REGISTER_LONG_CONSTANT("{{.Name}}", {{.CValue}}, CONST_CS | CONST_PERSISTENT);
-    {{end}}{{end}}
+    {{- range .Constants}}
+    {{- if .IsIota}}REGISTER_LONG_CONSTANT("{{.Name}}", {{.Name}}, CONST_CS | CONST_PERSISTENT);
+    {{- else if eq .Type "string"}}REGISTER_STRING_CONSTANT("{{.Name}}", {{.CValue}}, CONST_CS | CONST_PERSISTENT);
+    {{- else if eq .Type "bool"}}REGISTER_LONG_CONSTANT("{{.Name}}", {{if eq .Value "true"}}1{{else}}0{{end}}, CONST_CS | CONST_PERSISTENT);
+    {{- else if eq .Type "float"}}REGISTER_DOUBLE_CONSTANT("{{.Name}}", {{.CValue}}, CONST_CS | CONST_PERSISTENT);
+    {{- else}}REGISTER_LONG_CONSTANT("{{.Name}}", {{.CValue}}, CONST_CS | CONST_PERSISTENT);
+    {{- end}}
+    {{- end}}
 
     return SUCCESS;
 }

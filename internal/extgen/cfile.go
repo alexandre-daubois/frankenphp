@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"github.com/iancoleman/strcase"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"text/template"
 )
@@ -73,5 +74,26 @@ func (cg *CFileGenerator) getTemplateContent() (string, error) {
 		return "", err
 	}
 
-	return buf.String(), nil
+	return cg.cleanupWhitespace(buf.String()), nil
+}
+
+// cleanupWhitespace removes excessive blank lines and trailing whitespace
+func (cg *CFileGenerator) cleanupWhitespace(content string) string {
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " \t")
+	}
+
+	content = strings.Join(lines, "\n")
+
+	blankBeforeBrace := regexp.MustCompile(`\n\n+}`)
+	content = blankBeforeBrace.ReplaceAllString(content, "\n}")
+
+	multipleBlankLines := regexp.MustCompile(`\n\n\n+`)
+	content = multipleBlankLines.ReplaceAllString(content, "\n\n")
+
+	content = strings.TrimLeft(content, "\n")
+	content = strings.TrimRight(content, "\n") + "\n"
+
+	return content
 }

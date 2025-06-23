@@ -41,6 +41,7 @@ jobs:
       php83_version: ${{ steps.check.outputs.php83_version }}
       skip: ${{ steps.check.outputs.skip }}
       ref: ${{ steps.check.outputs.ref || (github.event_name == 'workflow_dispatch' && inputs.version) || '' }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Check PHP versions
         id: check
@@ -83,6 +84,17 @@ jobs:
       - name: Set up Docker Buildx
         if: ${{ !fromJson(steps.check.outputs.skip) }}
         uses: docker/setup-buildx-action@v3
+      - name: Set version
+        if: ${{ !fromJson(steps.check.outputs.skip) }}
+        id: version
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" == "tag" ]; then
+            VERSION=${GITHUB_REF_NAME#v}
+          else
+            VERSION="${{ steps.check.outputs.ref || 'dev' }}"
+          fi
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
       - name: Create variants matrix
         if: ${{ !fromJson(steps.check.outputs.skip) }}
         id: matrix
@@ -97,7 +109,7 @@ jobs:
           } >> "${GITHUB_OUTPUT}"
         env:
           SHA: ${{ github.sha }}
-          VERSION: ${{ (github.ref_type == 'tag' && github.ref_name) || steps.check.outputs.ref || 'dev' }}
+          VERSION: ${{ steps.version.outputs.version || steps.check.outputs.ref || 'dev' }}
           PHP_VERSION: ${{ steps.check.outputs.php_version }}
   build:
     runs-on: ${{ startsWith(matrix.platform, 'linux/arm') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
@@ -161,7 +173,7 @@ jobs:
             ${{ fromJson(needs.prepare.outputs.push) && format('*.output=type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.IMAGE_NAME) || '' }}
         env:
           SHA: ${{ github.sha }}
-          VERSION: ${{ (github.ref_type == 'tag' && github.ref_name) || needs.prepare.outputs.ref || 'dev' }}
+          VERSION: ${{ needs.prepare.outputs.version || needs.prepare.outputs.ref || 'dev' }}
           PHP_VERSION: ${{ needs.prepare.outputs.php_version }}
       - # Workaround for https://github.com/actions/runner/pull/2477#issuecomment-1501003600
         name: Export metadata

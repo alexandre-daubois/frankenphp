@@ -42,8 +42,8 @@ jobs:
           ini-file: development
           coverage: none
           tools: none
+          thread_safety: ts
         env:
-          phpts: ts
           debug: true
       - name: Install e-dant/watcher
         uses: ./.github/actions/watcher

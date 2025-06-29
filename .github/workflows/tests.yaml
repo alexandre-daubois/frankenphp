@@ -45,8 +45,6 @@ jobs:
         env:
           phpts: ts
           debug: true
-      - name: Determine PHP version
-        run: php -v
       - name: Install e-dant/watcher
         uses: ./.github/actions/watcher
       - name: Set CGO flags
@@ -59,7 +57,7 @@ jobs:
       - name: Compile library tests
         run: go test -race -v -x -c
       - name: Run library tests
-        run: php -v
+        run: ./frankenphp.test -test.v
       - name: Run Caddy module tests
         working-directory: caddy/
         run: go test -tags nobadger,nomysql,nopgx -race -v ./...

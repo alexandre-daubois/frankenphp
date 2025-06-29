@@ -9,12 +9,11 @@ package frankenphp
 import "C"
 import (
 	"context"
+	"github.com/dunglas/frankenphp/internal/memory"
+	"github.com/dunglas/frankenphp/internal/phpheaders"
 	"log/slog"
 	"strings"
 	"sync"
-
-	"github.com/dunglas/frankenphp/internal/memory"
-	"github.com/dunglas/frankenphp/internal/phpheaders"
 )
 
 // represents the main PHP thread
@@ -103,6 +102,11 @@ func drainPHPThreads() {
 	mainThread.state.set(stateDone)
 	mainThread.state.waitFor(stateReserved)
 	phpThreads = nil
+}
+
+//export go_wait_for_pending_threads
+func go_wait_for_pending_threads() {
+	mainThread.state.waitFor(stateDone)
 }
 
 func (mainThread *phpMainThread) start() error {

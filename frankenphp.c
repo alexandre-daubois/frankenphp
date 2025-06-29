@@ -892,11 +892,7 @@ static void *php_main(void *arg) {
   set_thread_name("php-main");
 
 #ifdef ZTS
-#if (PHP_VERSION_ID >= 80300)
-  php_tsrm_startup_ex((intptr_t)arg);
-#else
   php_tsrm_startup();
-#endif
 /*tsrm_error_set(TSRM_ERROR_LEVEL_INFO, NULL);*/
 #ifdef PHP_WIN32
   ZEND_TSRMLS_CACHE_UPDATE();
@@ -929,6 +925,7 @@ static void *php_main(void *arg) {
   go_frankenphp_main_thread_is_ready();
 
   /* channel closed, shutdown gracefully */
+  go_wait_for_pending_threads();
   frankenphp_sapi_module.shutdown(&frankenphp_sapi_module);
 
   sapi_shutdown();

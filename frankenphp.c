@@ -850,52 +850,27 @@ static void *php_thread(void *arg) {
   char thread_name[16] = {0};
   snprintf(thread_name, 16, "php-%" PRIxPTR, thread_index);
   set_thread_name(thread_name);
-  fprintf(stdout, "[DEBUG] php_thread: Thread %lu name set\n", thread_index);
-  fflush(stdout);
 
 #ifdef ZTS
-  fprintf(stdout, "[DEBUG] php_thread: ZTS defined for thread %lu\n", thread_index);
-  fflush(stdout);
   /* initial resource fetch */
   (void)ts_resource(0);
-  fprintf(stdout, "[DEBUG] php_thread: ts_resource(0) called for thread %lu\n", thread_index);
-  fflush(stdout);
-#ifndef PHP_WIN32
-  ZEND_TSRMLS_CACHE_UPDATE(); // This is the missing line for Linux ZTS threads
-  fprintf(stdout, "[DEBUG] php_thread: ZEND_TSRMLS_CACHE_UPDATE() called for thread %lu (Linux)\n", thread_index);
-  fflush(stdout);
-#endif
 #ifdef PHP_WIN32
   ZEND_TSRMLS_CACHE_UPDATE();
-  fprintf(stdout, "[DEBUG] php_thread: ZEND_TSRMLS_CACHE_UPDATE() called for thread %lu (Windows)\n", thread_index);
-  fflush(stdout);
 #endif
 #endif
 
   // loop until Go signals to stop
   char *scriptName = NULL;
-  fprintf(stdout, "[DEBUG] php_thread: Entering script execution loop for thread %lu\n", thread_index);
-  fflush(stdout);
   while ((scriptName = go_frankenphp_before_script_execution(thread_index))) {
-    fprintf(stdout, "[DEBUG] php_thread: Executing script %s for thread %lu\n", scriptName, thread_index);
-    fflush(stdout);
     go_frankenphp_after_script_execution(thread_index,
                                          frankenphp_execute_script(scriptName));
-    fprintf(stdout, "[DEBUG] php_thread: Script execution finished for thread %lu\n", thread_index);
-    fflush(stdout);
   }
-  fprintf(stdout, "[DEBUG] php_thread: Exiting script execution loop for thread %lu\n", thread_index);
-  fflush(stdout);
 
 #ifdef ZTS
   ts_free_thread();
-  fprintf(stdout, "[DEBUG] php_thread: ts_free_thread() called for thread %lu\n", thread_index);
-  fflush(stdout);
 #endif
 
   go_frankenphp_on_thread_shutdown(thread_index);
-  fprintf(stdout, "[DEBUG] php_thread: go_frankenphp_on_thread_shutdown() called for thread %lu\n", thread_index);
-  fflush(stdout);
 
   return NULL;
 }
@@ -917,7 +892,11 @@ static void *php_main(void *arg) {
   set_thread_name("php-main");
 
 #ifdef ZTS
+#if (PHP_VERSION_ID >= 80300)
+  php_tsrm_startup_ex((intptr_t)arg);
+#else
   php_tsrm_startup();
+#endif
 /*tsrm_error_set(TSRM_ERROR_LEVEL_INFO, NULL);*/
 #ifdef PHP_WIN32
   ZEND_TSRMLS_CACHE_UPDATE();
@@ -950,7 +929,6 @@ static void *php_main(void *arg) {
   go_frankenphp_main_thread_is_ready();
 
   /* channel closed, shutdown gracefully */
-  go_wait_for_pending_threads();
   frankenphp_sapi_module.shutdown(&frankenphp_sapi_module);
 
   sapi_shutdown();

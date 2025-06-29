@@ -860,9 +860,14 @@ static void *php_thread(void *arg) {
   (void)ts_resource(0);
   fprintf(stdout, "[DEBUG] php_thread: ts_resource(0) called for thread %lu\n", thread_index);
   fflush(stdout);
+#ifndef PHP_WIN32
+  ZEND_TSRMLS_CACHE_UPDATE(); // This is the missing line for Linux ZTS threads
+  fprintf(stdout, "[DEBUG] php_thread: ZEND_TSRMLS_CACHE_UPDATE() called for thread %lu (Linux)\n", thread_index);
+  fflush(stdout);
+#endif
 #ifdef PHP_WIN32
   ZEND_TSRMLS_CACHE_UPDATE();
-  fprintf(stdout, "[DEBUG] php_thread: ZEND_TSRMLS_CACHE_UPDATE() called for thread %lu\n", thread_index);
+  fprintf(stdout, "[DEBUG] php_thread: ZEND_TSRMLS_CACHE_UPDATE() called for thread %lu (Windows)\n", thread_index);
   fflush(stdout);
 #endif
 #endif

@@ -27,6 +27,7 @@ jobs:
         php-versions: ["8.5"]
     env:
       GOMAXPROCS: 10
+      GODEBUG: cgocheck=2
       LIBRARY_PATH: ${{ github.workspace }}/watcher/target/lib
     steps:
       - uses: actions/checkout@v4

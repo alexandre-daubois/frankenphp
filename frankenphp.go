@@ -288,7 +288,7 @@ func Init(options ...Option) error {
 		initDebugger()
 
 		if globalLogger.Enabled(globalCtx, slog.LevelInfo) {
-			globalLogger.LogAttrs(globalCtx, slog.LevelInfo, "debugger enabled, JIT disabled, listening for DAP connections", slog.String("listen", opt.debugger.listen))
+			globalLogger.LogAttrs(globalCtx, slog.LevelInfo, "🐛 debugger enabled (and JIT disabled)", slog.String("listen", opt.debugger.listen))
 		}
 	}
 

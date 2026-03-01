@@ -1548,3 +1548,343 @@ func TestDebuggerStatus(t *testing.T) {
 		assert.NotEmpty(t, status.DAPListen)
 	}, opts)
 }
+
+func TestDebuggerVariableScalars(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(handler func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		bpChan := frankenphp.SubscribeBreakpoints()
+
+		cwd, _ := os.Getwd()
+		bpFile := filepath.Join(cwd, "testdata", "debugger-variables.php")
+		// Line 15: inner(21); — all global scalars are defined by this point
+		frankenphp.SetBreakpoint(bpFile, 15)
+
+		done := make(chan string, 1)
+		go func() {
+			body, _ := testGet("http://example.com/debugger-variables.php", handler, t)
+			done <- body
+		}()
+
+		select {
+		case hit := <-bpChan:
+			vars := frankenphp.GetFrameVariables(hit.ThreadIndex, 0)
+			require.NotEmpty(t, vars, "frame variables should not be empty")
+
+			byName := make(map[string]frankenphp.DebugVariable)
+			for _, v := range vars {
+				byName[v.Name] = v
+			}
+
+			if v, ok := byName["intVar"]; ok {
+				assert.Equal(t, "int", v.Type)
+				assert.EqualValues(t, 42, v.Value)
+			} else {
+				t.Error("expected variable $intVar")
+			}
+
+			if v, ok := byName["floatVar"]; ok {
+				assert.Equal(t, "float", v.Type)
+				assert.InDelta(t, 3.14, v.Value, 0.001)
+			} else {
+				t.Error("expected variable $floatVar")
+			}
+
+			if v, ok := byName["stringVar"]; ok {
+				assert.Equal(t, "string", v.Type)
+				assert.Equal(t, "hello", v.Value)
+			} else {
+				t.Error("expected variable $stringVar")
+			}
+
+			if v, ok := byName["boolVar"]; ok {
+				assert.Equal(t, "true", v.Type)
+				assert.Equal(t, true, v.Value)
+			} else {
+				t.Error("expected variable $boolVar")
+			}
+
+			if v, ok := byName["nullVar"]; ok {
+				assert.Equal(t, "null", v.Type)
+			} else {
+				t.Error("expected variable $nullVar")
+			}
+
+			frankenphp.ContinueThread(hit.ThreadIndex)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for breakpoint hit")
+		}
+
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for request to complete")
+		}
+
+		frankenphp.ClearBreakpoints()
+	}, opts)
+}
+
+func TestDebuggerVariableArrays(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(handler func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		bpChan := frankenphp.SubscribeBreakpoints()
+
+		cwd, _ := os.Getwd()
+		bpFile := filepath.Join(cwd, "testdata", "debugger-variables.php")
+		frankenphp.SetBreakpoint(bpFile, 15)
+
+		done := make(chan string, 1)
+		go func() {
+			body, _ := testGet("http://example.com/debugger-variables.php", handler, t)
+			done <- body
+		}()
+
+		select {
+		case hit := <-bpChan:
+			vars := frankenphp.GetFrameVariables(hit.ThreadIndex, 0)
+			require.NotEmpty(t, vars)
+
+			byName := make(map[string]frankenphp.DebugVariable)
+			for _, v := range vars {
+				byName[v.Name] = v
+			}
+
+			// Indexed array: $arr = [1, 2, 3]
+			if v, ok := byName["arr"]; ok {
+				assert.Equal(t, "array", v.Type)
+				switch arr := v.Value.(type) {
+				case []any:
+					assert.Len(t, arr, 3)
+				default:
+					t.Errorf("expected []any for $arr, got %T", v.Value)
+				}
+			} else {
+				t.Error("expected variable $arr")
+			}
+
+			// Associative array: $assoc = ['key' => 'value', 'num' => 99]
+			if v, ok := byName["assoc"]; ok {
+				assert.Equal(t, "array", v.Type)
+				switch assoc := v.Value.(type) {
+				case frankenphp.AssociativeArray[any]:
+					assert.Len(t, assoc.Map, 2)
+					assert.Equal(t, "value", assoc.Map["key"])
+				case map[string]any:
+					assert.Len(t, assoc, 2)
+					assert.Equal(t, "value", assoc["key"])
+				default:
+					t.Errorf("expected AssociativeArray or map for $assoc, got %T", v.Value)
+				}
+			} else {
+				t.Error("expected variable $assoc")
+			}
+
+			// Nested array: $nested = ['a' => [1, 2], 'b' => ['x' => true]]
+			if v, ok := byName["nested"]; ok {
+				assert.Equal(t, "array", v.Type)
+				assert.NotNil(t, v.Value, "nested array value should not be nil")
+			} else {
+				t.Error("expected variable $nested")
+			}
+
+			frankenphp.ContinueThread(hit.ThreadIndex)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for breakpoint hit")
+		}
+
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for request to complete")
+		}
+
+		frankenphp.ClearBreakpoints()
+	}, opts)
+}
+
+func TestDebuggerVariableObjects(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(handler func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		bpChan := frankenphp.SubscribeBreakpoints()
+
+		cwd, _ := os.Getwd()
+		bpFile := filepath.Join(cwd, "testdata", "debugger-objects.php")
+		// Line 11: echo "ok"; — $pt is defined
+		frankenphp.SetBreakpoint(bpFile, 11)
+
+		done := make(chan string, 1)
+		go func() {
+			body, _ := testGet("http://example.com/debugger-objects.php", handler, t)
+			done <- body
+		}()
+
+		select {
+		case hit := <-bpChan:
+			vars := frankenphp.GetFrameVariables(hit.ThreadIndex, 0)
+			require.NotEmpty(t, vars)
+
+			byName := make(map[string]frankenphp.DebugVariable)
+			for _, v := range vars {
+				byName[v.Name] = v
+			}
+
+			if v, ok := byName["pt"]; ok {
+				assert.Equal(t, "object", v.Type)
+				obj, isObj := v.Value.(frankenphp.DebugObject)
+				require.True(t, isObj, "expected DebugObject, got %T", v.Value)
+				assert.Equal(t, "Point", obj.ClassName)
+				assert.GreaterOrEqual(t, len(obj.Properties), 2)
+
+				propMap := make(map[string]frankenphp.DebugVariable)
+				for _, p := range obj.Properties {
+					propMap[p.Name] = p
+				}
+				if xProp, ok := propMap["x"]; ok {
+					assert.Equal(t, "int", xProp.Type)
+					assert.EqualValues(t, 10, xProp.Value)
+				} else {
+					t.Error("expected property $x on Point object")
+				}
+				if yProp, ok := propMap["y"]; ok {
+					assert.Equal(t, "int", yProp.Type)
+					assert.EqualValues(t, 20, yProp.Value)
+				} else {
+					t.Error("expected property $y on Point object")
+				}
+			} else {
+				t.Error("expected variable $pt")
+			}
+
+			frankenphp.ContinueThread(hit.ThreadIndex)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for breakpoint hit")
+		}
+
+		select {
+		case body := <-done:
+			assert.Equal(t, "ok", body)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for request to complete")
+		}
+
+		frankenphp.ClearBreakpoints()
+	}, opts)
+}
+
+func TestDebuggerVariableResources(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(handler func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		bpChan := frankenphp.SubscribeBreakpoints()
+
+		cwd, _ := os.Getwd()
+		bpFile := filepath.Join(cwd, "testdata", "debugger-variables.php")
+		frankenphp.SetBreakpoint(bpFile, 15)
+
+		done := make(chan string, 1)
+		go func() {
+			body, _ := testGet("http://example.com/debugger-variables.php", handler, t)
+			done <- body
+		}()
+
+		select {
+		case hit := <-bpChan:
+			vars := frankenphp.GetFrameVariables(hit.ThreadIndex, 0)
+			require.NotEmpty(t, vars)
+
+			byName := make(map[string]frankenphp.DebugVariable)
+			for _, v := range vars {
+				byName[v.Name] = v
+			}
+
+			if v, ok := byName["fh"]; ok {
+				assert.Equal(t, "resource", v.Type)
+				res, isRes := v.Value.(frankenphp.DebugResource)
+				require.True(t, isRes, "expected DebugResource, got %T", v.Value)
+				assert.NotEmpty(t, res.TypeName)
+				assert.Greater(t, res.ID, 0)
+			} else {
+				t.Error("expected variable $fh")
+			}
+
+			frankenphp.ContinueThread(hit.ThreadIndex)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for breakpoint hit")
+		}
+
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for request to complete")
+		}
+
+		frankenphp.ClearBreakpoints()
+	}, opts)
+}
+
+func TestDebuggerFrameVariables(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(handler func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		bpChan := frankenphp.SubscribeBreakpoints()
+
+		cwd, _ := os.Getwd()
+		bpFile := filepath.Join(cwd, "testdata", "debugger-variables.php")
+		// Line 4: echo "ok"; inside inner() — both inner's frame and global frame exist
+		frankenphp.SetBreakpoint(bpFile, 4)
+
+		done := make(chan string, 1)
+		go func() {
+			body, _ := testGet("http://example.com/debugger-variables.php", handler, t)
+			done <- body
+		}()
+
+		select {
+		case hit := <-bpChan:
+			stack := frankenphp.GetStackTrace(hit.ThreadIndex)
+			require.GreaterOrEqual(t, len(stack), 2, "expected at least 2 stack frames")
+
+			// Frame 0: inner() — should have $arg and $local
+			innerVars := frankenphp.GetFrameVariables(hit.ThreadIndex, 0)
+			require.NotEmpty(t, innerVars, "inner() frame should have variables")
+			innerByName := make(map[string]frankenphp.DebugVariable)
+			for _, v := range innerVars {
+				innerByName[v.Name] = v
+			}
+			if v, ok := innerByName["arg"]; ok {
+				assert.Equal(t, "int", v.Type)
+				assert.EqualValues(t, 21, v.Value)
+			} else {
+				t.Error("expected variable $arg in inner() frame")
+			}
+			if v, ok := innerByName["local"]; ok {
+				assert.Equal(t, "int", v.Type)
+				assert.EqualValues(t, 42, v.Value)
+			} else {
+				t.Error("expected variable $local in inner() frame")
+			}
+
+			// Frame 1: global scope — should have $intVar, $stringVar, etc.
+			globalVars := frankenphp.GetFrameVariables(hit.ThreadIndex, 1)
+			require.NotEmpty(t, globalVars, "global frame should have variables")
+			globalByName := make(map[string]frankenphp.DebugVariable)
+			for _, v := range globalVars {
+				globalByName[v.Name] = v
+			}
+			_, hasIntVar := globalByName["intVar"]
+			assert.True(t, hasIntVar, "expected $intVar in global frame")
+			_, hasStringVar := globalByName["stringVar"]
+			assert.True(t, hasStringVar, "expected $stringVar in global frame")
+
+			frankenphp.ContinueThread(hit.ThreadIndex)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for breakpoint hit")
+		}
+
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for request to complete")
+		}
+
+		frankenphp.ClearBreakpoints()
+	}, opts)
+}

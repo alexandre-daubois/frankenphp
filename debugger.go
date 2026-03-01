@@ -41,6 +41,16 @@ type DebugVariable struct {
 	Value any
 }
 
+type DebugObject struct {
+	ClassName  string
+	Properties []DebugVariable
+}
+
+type DebugResource struct {
+	TypeName string
+	ID       int
+}
+
 type BreakpointInfo struct {
 	ID   int    `json:"id"`
 	File string `json:"file"`
@@ -218,6 +228,17 @@ func GetLocals(threadIndex int) []DebugVariable {
 	return nil
 }
 
+func GetFrameVariables(threadIndex, frameIndex int) []DebugVariable {
+	debugMu.RLock()
+	defer debugMu.RUnlock()
+	if info, ok := debugThreadInfo[threadIndex]; ok {
+		if frameIndex >= 0 && frameIndex < len(info.Stack) {
+			return info.Stack[frameIndex].Variables
+		}
+	}
+	return nil
+}
+
 // readCapturedStack reads frames captured by C in pause_thread.
 // Uses C accessor function since Go can't read __thread variables directly.
 // MUST be called from the CGo callback (same OS thread as the PHP thread).
@@ -247,14 +268,7 @@ func readCapturedStack() []DebugFrame {
 			vars := unsafe.Slice(f.vars, nv)
 			frame.Variables = make([]DebugVariable, nv)
 			for j := 0; j < nv; j++ {
-				v := vars[j]
-				frame.Variables[j] = DebugVariable{
-					Name: C.GoString(v.name),
-					Type: zvalTypeName(int(v._type)),
-				}
-				if v.value != nil {
-					frame.Variables[j].Value = zvalToGo(v.value)
-				}
+				frame.Variables[j] = readDebugVariable(&vars[j], 0)
 			}
 		}
 		frames[i] = frame
@@ -275,14 +289,7 @@ func readCapturedLocals() []DebugVariable {
 	cSlice := unsafe.Slice(cVars, count)
 	vars := make([]DebugVariable, count)
 	for i := 0; i < count; i++ {
-		v := cSlice[i]
-		vars[i] = DebugVariable{
-			Name: C.GoString(v.name),
-			Type: zvalTypeName(int(v._type)),
-		}
-		if v.value != nil {
-			vars[i].Value = zvalToGo(v.value)
-		}
+		vars[i] = readDebugVariable(&cSlice[i], 0)
 	}
 	return vars
 }
@@ -329,6 +336,83 @@ func zvalTypeName(t int) string {
 	default:
 		return "unknown"
 	}
+}
+
+func readDebugVariable(v *C.frankenphp_debug_variable_t, depth int) DebugVariable {
+	name := ""
+	if v.name != nil {
+		name = C.GoString(v.name)
+	}
+	dv := DebugVariable{
+		Name: name,
+		Type: zvalTypeName(int(v._type)),
+	}
+	if v.value == nil {
+		return dv
+	}
+	switch int(v._type) {
+	case 8: // IS_OBJECT
+		dv.Value = readObjectValue(v.value, depth)
+	case 9: // IS_RESOURCE
+		dv.Value = DebugResource{
+			TypeName: C.GoString(C.frankenphp_debugger_resource_type(v.value)),
+			ID:       int(C.frankenphp_debugger_resource_id(v.value)),
+		}
+	case 7: // IS_ARRAY
+		dv.Value = zvalToGo(v.value)
+		if dv.Value == nil {
+			// GoValue failed (array likely contains objects), use debug-specific conversion
+			dv.Value = readArrayValue(v.value, depth)
+		}
+	default:
+		dv.Value = zvalToGo(v.value)
+	}
+	return dv
+}
+
+func readArrayValue(zval *C.zval, depth int) []DebugVariable {
+	if depth >= 5 {
+		return nil
+	}
+
+	var count C.int
+	cVars := C.frankenphp_debugger_array_vars(zval, &count)
+	n := int(count)
+	if n == 0 || cVars == nil {
+		return nil
+	}
+	defer C.frankenphp_debugger_free_array_vars(cVars, count)
+
+	vars := unsafe.Slice(cVars, n)
+	result := make([]DebugVariable, n)
+	for i := 0; i < n; i++ {
+		result[i] = readDebugVariable(&vars[i], depth+1)
+	}
+	return result
+}
+
+func readObjectValue(zval *C.zval, depth int) DebugObject {
+	className := C.GoString(C.frankenphp_debugger_object_class_name(zval))
+	obj := DebugObject{ClassName: className}
+
+	if depth >= 3 {
+		return obj
+	}
+
+	var count C.int
+	cVars := C.frankenphp_debugger_object_vars(zval, &count)
+	n := int(count)
+	if n == 0 || cVars == nil {
+		return obj
+	}
+	defer C.free(unsafe.Pointer(cVars))
+
+	vars := unsafe.Slice(cVars, n)
+	obj.Properties = make([]DebugVariable, n)
+	for i := 0; i < n; i++ {
+		obj.Properties[i] = readDebugVariable(&vars[i], depth+1)
+	}
+	return obj
 }
 
 func zvalToGo(zval *C.zval) any {

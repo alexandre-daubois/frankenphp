@@ -67,4 +67,11 @@ void frankenphp_debugger_free_stack(frankenphp_debug_frame_t *frames, int depth)
 frankenphp_debug_variable_t *frankenphp_debugger_get_locals(int *out_count);
 void frankenphp_debugger_free_locals(frankenphp_debug_variable_t *vars, int count);
 
+const char *frankenphp_debugger_object_class_name(zval *obj);
+frankenphp_debug_variable_t *frankenphp_debugger_object_vars(zval *obj, int *out_count);
+frankenphp_debug_variable_t *frankenphp_debugger_array_vars(zval *arr, int *out_count);
+void frankenphp_debugger_free_array_vars(frankenphp_debug_variable_t *vars, int count);
+const char *frankenphp_debugger_resource_type(zval *res);
+int frankenphp_debugger_resource_id(zval *res);
+
 #endif

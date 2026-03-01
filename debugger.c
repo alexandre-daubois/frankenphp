@@ -399,6 +399,7 @@ frankenphp_debug_frame_t *frankenphp_debugger_get_stack(int *out_depth) {
 					    ex->func->op_array.vars[j]);
 					zval *val =
 					    ZEND_CALL_VAR_NUM(ex, j);
+					ZVAL_DEREF(val);
 					frames[i].vars[j].type =
 					    Z_TYPE_P(val);
 					frames[i].vars[j].value = val;
@@ -442,6 +443,7 @@ frankenphp_debug_variable_t *frankenphp_debugger_get_locals(int *out_count) {
 	for (int i = 0; i < count; i++) {
 		vars[i].name = ZSTR_VAL(op_array->vars[i]);
 		zval *val = ZEND_CALL_VAR_NUM(ex, i);
+		ZVAL_DEREF(val);
 		vars[i].type = Z_TYPE_P(val);
 		vars[i].value = val;
 	}
@@ -451,4 +453,132 @@ frankenphp_debug_variable_t *frankenphp_debugger_get_locals(int *out_count) {
 void frankenphp_debugger_free_locals(frankenphp_debug_variable_t *vars,
                                      int count) {
 	free(vars);
+}
+
+const char *frankenphp_debugger_object_class_name(zval *obj) {
+	if (!obj || Z_TYPE_P(obj) != IS_OBJECT)
+		return "";
+	return ZSTR_VAL(Z_OBJCE_P(obj)->name);
+}
+
+frankenphp_debug_variable_t *frankenphp_debugger_object_vars(zval *obj,
+                                                             int *out_count) {
+	*out_count = 0;
+	if (!obj || Z_TYPE_P(obj) != IS_OBJECT)
+		return NULL;
+
+	zend_array *ht =
+	    zend_get_properties_for(obj, ZEND_PROP_PURPOSE_DEBUG);
+	if (!ht)
+		return NULL;
+
+	int count = zend_hash_num_elements(ht);
+	if (count == 0) {
+		zend_release_properties(ht);
+		return NULL;
+	}
+
+	frankenphp_debug_variable_t *vars =
+	    calloc(count, sizeof(frankenphp_debug_variable_t));
+	int i = 0;
+	zend_string *key;
+	zval *val;
+	ZEND_HASH_FOREACH_STR_KEY_VAL(ht, key, val)
+	{
+		if (Z_TYPE_P(val) == IS_INDIRECT)
+			val = Z_INDIRECT_P(val);
+		ZVAL_DEREF(val);
+
+		if (key) {
+			const char *name = ZSTR_VAL(key);
+			size_t len = ZSTR_LEN(key);
+			// demangle private/protected
+			if (len > 0 && name[0] == '\0') {
+				const char *real =
+				    memchr(name + 1, '\0', len - 1);
+				if (real)
+					name = real + 1;
+			}
+			vars[i].name = name;
+		} else {
+			vars[i].name = "?";
+		}
+		vars[i].type = Z_TYPE_P(val);
+		vars[i].value = val;
+		i++;
+	}
+	ZEND_HASH_FOREACH_END();
+
+	// not releasing ht: name pointers and value pointers reference it, and
+	// memory is reclaimed when the PHP request ends
+	*out_count = i;
+	return vars;
+}
+
+frankenphp_debug_variable_t *frankenphp_debugger_array_vars(zval *arr,
+                                                            int *out_count) {
+	*out_count = 0;
+	if (!arr || Z_TYPE_P(arr) != IS_ARRAY)
+		return NULL;
+
+	zend_array *ht = Z_ARRVAL_P(arr);
+	if (!ht)
+		return NULL;
+
+	int count = zend_hash_num_elements(ht);
+	if (count == 0)
+		return NULL;
+
+	frankenphp_debug_variable_t *vars =
+	    calloc(count, sizeof(frankenphp_debug_variable_t));
+	int i = 0;
+	zend_string *key;
+	zend_ulong idx;
+	zval *val;
+	ZEND_HASH_FOREACH_KEY_VAL(ht, idx, key, val)
+	{
+		if (Z_TYPE_P(val) == IS_INDIRECT)
+			val = Z_INDIRECT_P(val);
+		ZVAL_DEREF(val);
+
+		if (key) {
+			vars[i].name = strdup(ZSTR_VAL(key));
+		} else {
+			char buf[24];
+			snprintf(buf, sizeof(buf), "[%lu]",
+			         (unsigned long)idx);
+			vars[i].name = strdup(buf);
+		}
+		vars[i].type = Z_TYPE_P(val);
+		vars[i].value = val;
+		i++;
+	}
+	ZEND_HASH_FOREACH_END();
+
+	*out_count = i;
+	return vars;
+}
+
+void frankenphp_debugger_free_array_vars(frankenphp_debug_variable_t *vars,
+                                         int count) {
+	if (!vars)
+		return;
+	for (int i = 0; i < count; i++) {
+		free((void *)vars[i].name);
+	}
+	free(vars);
+}
+
+const char *frankenphp_debugger_resource_type(zval *res) {
+	if (!res || Z_TYPE_P(res) != IS_RESOURCE)
+		return "unknown";
+	const char *type_name =
+	    zend_rsrc_list_get_rsrc_type(Z_RES_P(res));
+	return type_name ? type_name : "unknown";
+}
+
+int frankenphp_debugger_resource_id(zval *res) {
+	if (!res || Z_TYPE_P(res) != IS_RESOURCE)
+		return -1;
+	return Z_RES_P(res)->handle;
 }

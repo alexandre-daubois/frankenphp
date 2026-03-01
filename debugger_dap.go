@@ -5,20 +5,28 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"sort"
 	"sync"
 	"sync/atomic"
 
 	"github.com/google/go-dap"
 )
 
+type varRef struct {
+	value any // []DebugVariable for scopes, map[string]any or []any for expanded children
+}
+
 type dapServer struct {
-	listener net.Listener
-	mu       sync.Mutex
-	conn     net.Conn
-	writer   *bufio.Writer
-	seq      atomic.Int32
-	bpIDs    map[string][]int // filename -> breakpoint IDs
-	stopCh   chan struct{}
+	listener   net.Listener
+	mu         sync.Mutex
+	conn       net.Conn
+	writer     *bufio.Writer
+	seq        atomic.Int32
+	bpIDs      map[string][]int // filename -> breakpoint IDs
+	stopCh     chan struct{}
+	varMu      sync.Mutex
+	nextVarRef int
+	varRefs    map[int]*varRef
 }
 
 var debugServer *dapServer
@@ -35,6 +43,7 @@ func startDebugServer(listen string) error {
 		listener: ln,
 		bpIDs:    make(map[string][]int),
 		stopCh:   make(chan struct{}),
+		varRefs:  make(map[int]*varRef),
 	}
 
 	go debugServer.acceptLoop()
@@ -92,7 +101,29 @@ func (s *dapServer) eventLoop() {
 	}
 }
 
+func (s *dapServer) allocVarRef(value any) int {
+	s.varMu.Lock()
+	defer s.varMu.Unlock()
+	s.nextVarRef++
+	s.varRefs[s.nextVarRef] = &varRef{value: value}
+	return s.nextVarRef
+}
+
+func (s *dapServer) getVarRef(ref int) *varRef {
+	s.varMu.Lock()
+	defer s.varMu.Unlock()
+	return s.varRefs[ref]
+}
+
+func (s *dapServer) clearVarRefs() {
+	s.varMu.Lock()
+	defer s.varMu.Unlock()
+	s.varRefs = make(map[int]*varRef)
+	s.nextVarRef = 0
+}
+
 func (s *dapServer) handleConnection(conn net.Conn) {
+	s.clearVarRefs()
 	reader := bufio.NewReader(conn)
 	for {
 		msg, err := dap.ReadProtocolMessage(reader)
@@ -268,8 +299,15 @@ func (s *dapServer) onStackTrace(req *dap.StackTraceRequest) {
 }
 
 func (s *dapServer) onScopes(req *dap.ScopesRequest) {
-	// frameId encodes threadIndex*1000 + frameIndex
 	frameId := req.Arguments.FrameId
+	threadIndex := frameId/1000 - 1 // convert 1-based DAP threadId back to 0-based
+	frameIndex := frameId % 1000
+
+	vars := GetFrameVariables(threadIndex, frameIndex)
+	ref := 0
+	if len(vars) > 0 {
+		ref = s.allocVarRef(vars)
+	}
 
 	s.sendResponse(&dap.ScopesResponse{
 		Response: *s.newResponse(req.Seq, req.Command),
@@ -277,7 +315,7 @@ func (s *dapServer) onScopes(req *dap.ScopesRequest) {
 			Scopes: []dap.Scope{
 				{
 					Name:               "Locals",
-					VariablesReference: frameId*10 + 1,
+					VariablesReference: ref,
 					Expensive:          false,
 				},
 			},
@@ -286,27 +324,104 @@ func (s *dapServer) onScopes(req *dap.ScopesRequest) {
 }
 
 func (s *dapServer) onVariables(req *dap.VariablesRequest) {
-	// variablesReference encodes frameId*10 + scopeType
-	// For now we only return locals (scopeType 1)
-	ref := req.Arguments.VariablesReference
-	threadIndex := ref / 10000
+	vr := s.getVarRef(req.Arguments.VariablesReference)
+	if vr == nil {
+		s.sendResponse(&dap.VariablesResponse{
+			Response: *s.newResponse(req.Seq, req.Command),
+			Body:     dap.VariablesResponseBody{Variables: []dap.Variable{}},
+		})
+		return
+	}
 
-	vars := GetLocals(threadIndex)
+	var dapVars []dap.Variable
 
-	dapVars := make([]dap.Variable, len(vars))
-	for i, v := range vars {
-		dapVars[i] = dap.Variable{
-			Name:  v.Name,
-			Value: fmt.Sprintf("%v", v.Value),
-			Type:  v.Type,
+	switch val := vr.value.(type) {
+	case []DebugVariable:
+		dapVars = make([]dap.Variable, len(val))
+		for i, dv := range val {
+			childRef := 0
+			if isExpandable(dv.Value) {
+				childRef = s.allocVarRef(dv.Value)
+			}
+			dapVars[i] = dap.Variable{
+				Name:               dv.Name,
+				Value:              formatDebugVar(dv),
+				Type:               dv.Type,
+				VariablesReference: childRef,
+			}
+		}
+
+	case DebugObject:
+		dapVars = make([]dap.Variable, len(val.Properties))
+		for i, dv := range val.Properties {
+			childRef := 0
+			if isExpandable(dv.Value) {
+				childRef = s.allocVarRef(dv.Value)
+			}
+			dapVars[i] = dap.Variable{
+				Name:               dv.Name,
+				Value:              formatDebugVar(dv),
+				Type:               dv.Type,
+				VariablesReference: childRef,
+			}
+		}
+
+	case AssociativeArray[any]:
+		dapVars = make([]dap.Variable, len(val.Order))
+		for i, k := range val.Order {
+			child := val.Map[k]
+			childRef := 0
+			if isExpandable(child) {
+				childRef = s.allocVarRef(child)
+			}
+			dapVars[i] = dap.Variable{
+				Name:               k,
+				Value:              formatValue(child),
+				Type:               goTypeToPhpType(child),
+				VariablesReference: childRef,
+			}
+		}
+
+	case map[string]any:
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		dapVars = make([]dap.Variable, len(keys))
+		for i, k := range keys {
+			child := val[k]
+			childRef := 0
+			if isExpandable(child) {
+				childRef = s.allocVarRef(child)
+			}
+			dapVars[i] = dap.Variable{
+				Name:               k,
+				Value:              formatValue(child),
+				Type:               goTypeToPhpType(child),
+				VariablesReference: childRef,
+			}
+		}
+
+	case []any:
+		dapVars = make([]dap.Variable, len(val))
+		for i, child := range val {
+			childRef := 0
+			if isExpandable(child) {
+				childRef = s.allocVarRef(child)
+			}
+			dapVars[i] = dap.Variable{
+				Name:               fmt.Sprintf("[%d]", i),
+				Value:              formatValue(child),
+				Type:               goTypeToPhpType(child),
+				VariablesReference: childRef,
+			}
 		}
 	}
 
 	s.sendResponse(&dap.VariablesResponse{
 		Response: *s.newResponse(req.Seq, req.Command),
-		Body: dap.VariablesResponseBody{
-			Variables: dapVars,
-		},
+		Body:     dap.VariablesResponseBody{Variables: dapVars},
 	})
 }
 
@@ -367,6 +482,8 @@ func (s *dapServer) onPause(req *dap.PauseRequest) {
 }
 
 func (s *dapServer) onDisconnect(req *dap.DisconnectRequest) {
+	s.clearVarRefs()
+
 	debugMu.RLock()
 	for idx := range debugThreadInfo {
 		globalLogger.LogAttrs(globalCtx, slog.LevelDebug, "debugger: resumed thread on disconnect", slog.Int("thread", idx))
@@ -377,6 +494,81 @@ func (s *dapServer) onDisconnect(req *dap.DisconnectRequest) {
 	s.sendResponse(&dap.DisconnectResponse{
 		Response: *s.newResponse(req.Seq, req.Command),
 	})
+}
+
+func isExpandable(v any) bool {
+	switch v.(type) {
+	case map[string]any, []any, AssociativeArray[any], DebugObject, []DebugVariable:
+		return true
+	}
+	return false
+}
+
+func formatDebugVar(v DebugVariable) string {
+	if v.Type == "undef" {
+		return "undefined"
+	}
+	return formatValue(v.Value)
+}
+
+func formatValue(v any) string {
+	if v == nil {
+		return "null"
+	}
+	switch val := v.(type) {
+	case bool:
+		if val {
+			return "true"
+		}
+		return "false"
+	case int:
+		return fmt.Sprintf("%d", val)
+	case int64:
+		return fmt.Sprintf("%d", val)
+	case float64:
+		return fmt.Sprintf("%g", val)
+	case string:
+		if len(val) > 80 {
+			return fmt.Sprintf("\"%s...\"", val[:80])
+		}
+		return fmt.Sprintf("\"%s\"", val)
+	case DebugObject:
+		return val.ClassName
+	case DebugResource:
+		return fmt.Sprintf("resource #%d (%s)", val.ID, val.TypeName)
+	case []DebugVariable:
+		return fmt.Sprintf("array(%d)", len(val))
+	case AssociativeArray[any]:
+		return fmt.Sprintf("array(%d)", len(val.Map))
+	case map[string]any:
+		return fmt.Sprintf("array(%d)", len(val))
+	case []any:
+		return fmt.Sprintf("array(%d)", len(val))
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+func goTypeToPhpType(v any) string {
+	if v == nil {
+		return "null"
+	}
+	switch v.(type) {
+	case bool:
+		return "bool"
+	case int, int64:
+		return "int"
+	case float64:
+		return "float"
+	case string:
+		return "string"
+	case DebugObject:
+		return "object"
+	case []DebugVariable, AssociativeArray[any], map[string]any, []any:
+		return "array"
+	default:
+		return "mixed"
+	}
 }
 
 func (s *dapServer) onEvaluate(req *dap.EvaluateRequest) {

@@ -47,6 +47,7 @@ typedef struct {
 
 frankenphp_debug_frame_t *frankenphp_debugger_get_captured_frames(int *out_depth);
 frankenphp_debug_variable_t *frankenphp_debugger_get_captured_locals(int *out_count);
+frankenphp_debug_variable_t *frankenphp_debugger_get_captured_globals(int *out_count);
 
 void frankenphp_debugger_init(void);
 void frankenphp_debugger_init_thread(int idx);
@@ -66,6 +67,8 @@ frankenphp_debug_frame_t *frankenphp_debugger_get_stack(int *out_depth);
 void frankenphp_debugger_free_stack(frankenphp_debug_frame_t *frames, int depth);
 frankenphp_debug_variable_t *frankenphp_debugger_get_locals(int *out_count);
 void frankenphp_debugger_free_locals(frankenphp_debug_variable_t *vars, int count);
+frankenphp_debug_variable_t *frankenphp_debugger_get_globals(int *out_count);
+void frankenphp_debugger_free_globals(frankenphp_debug_variable_t *vars, int count);
 
 const char *frankenphp_debugger_object_class_name(zval *obj);
 frankenphp_debug_variable_t *frankenphp_debugger_object_vars(zval *obj, int *out_count);

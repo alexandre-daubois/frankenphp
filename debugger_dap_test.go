@@ -207,9 +207,13 @@ func TestDAPVariables(t *testing.T) {
 		msg = dapRecv(t, conn, reader)
 		scopesResp, ok := msg.(*dap.ScopesResponse)
 		require.True(t, ok, "expected ScopesResponse, got %T", msg)
-		require.NotEmpty(t, scopesResp.Body.Scopes)
+		require.Len(t, scopesResp.Body.Scopes, 2)
+		assert.Equal(t, "Locals", scopesResp.Body.Scopes[0].Name)
+		assert.Equal(t, "Globals", scopesResp.Body.Scopes[1].Name)
 		localsRef := scopesResp.Body.Scopes[0].VariablesReference
 		assert.Greater(t, localsRef, 0, "Locals scope should have a variable reference")
+		globalsRef := scopesResp.Body.Scopes[1].VariablesReference
+		assert.Greater(t, globalsRef, 0, "Globals scope should have a variable reference")
 
 		dapSend(t, writer, &dap.VariablesRequest{
 			Request: dap.Request{
@@ -289,6 +293,38 @@ func TestDAPVariables(t *testing.T) {
 			assert.Contains(t, v.Value, "resource #")
 		} else {
 			t.Error("expected DAP variable fh")
+		}
+
+		// globals scope contains the same top-level variables
+		dapSend(t, writer, &dap.VariablesRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "variables",
+			},
+			Arguments: dap.VariablesArguments{VariablesReference: globalsRef},
+		})
+		msg = dapRecv(t, conn, reader)
+		globalsVarsResp, ok := msg.(*dap.VariablesResponse)
+		require.True(t, ok, "expected VariablesResponse for globals, got %T", msg)
+		require.NotEmpty(t, globalsVarsResp.Body.Variables)
+
+		globalByName := make(map[string]dap.Variable)
+		for _, v := range globalsVarsResp.Body.Variables {
+			globalByName[v.Name] = v
+		}
+
+		if v, ok := globalByName["intVar"]; ok {
+			assert.Equal(t, "42", v.Value)
+			assert.Equal(t, "int", v.Type)
+		} else {
+			t.Errorf("expected global intVar, got globals: %v", varNames(globalsVarsResp.Body.Variables))
+		}
+
+		if v, ok := globalByName["stringVar"]; ok {
+			assert.Equal(t, "string", v.Type)
+			assert.Equal(t, `"hello"`, v.Value)
+		} else {
+			t.Errorf("expected global stringVar, got globals: %v", varNames(globalsVarsResp.Body.Variables))
 		}
 
 		dapSend(t, writer, &dap.ContinueRequest{

@@ -304,9 +304,15 @@ func (s *dapServer) onScopes(req *dap.ScopesRequest) {
 	frameIndex := frameId % 1000
 
 	vars := GetFrameVariables(threadIndex, frameIndex)
-	ref := 0
+	localsRef := 0
 	if len(vars) > 0 {
-		ref = s.allocVarRef(vars)
+		localsRef = s.allocVarRef(vars)
+	}
+
+	globals := GetGlobals(threadIndex)
+	globalsRef := 0
+	if len(globals) > 0 {
+		globalsRef = s.allocVarRef(globals)
 	}
 
 	s.sendResponse(&dap.ScopesResponse{
@@ -315,7 +321,12 @@ func (s *dapServer) onScopes(req *dap.ScopesRequest) {
 			Scopes: []dap.Scope{
 				{
 					Name:               "Locals",
-					VariablesReference: ref,
+					VariablesReference: localsRef,
+					Expensive:          false,
+				},
+				{
+					Name:               "Globals",
+					VariablesReference: globalsRef,
 					Expensive:          false,
 				},
 			},

@@ -26,6 +26,8 @@ __thread frankenphp_debug_frame_t *dbg_captured_frames = NULL;
 __thread int dbg_captured_depth = 0;
 __thread frankenphp_debug_variable_t *dbg_captured_locals = NULL;
 __thread int dbg_captured_locals_count = 0;
+__thread frankenphp_debug_variable_t *dbg_captured_globals = NULL;
+__thread int dbg_captured_globals_count = 0;
 
 extern __thread uintptr_t thread_index;
 
@@ -37,6 +39,11 @@ frankenphp_debug_frame_t *frankenphp_debugger_get_captured_frames(int *out_depth
 frankenphp_debug_variable_t *frankenphp_debugger_get_captured_locals(int *out_count) {
 	*out_count = dbg_captured_locals_count;
 	return dbg_captured_locals;
+}
+
+frankenphp_debug_variable_t *frankenphp_debugger_get_captured_globals(int *out_count) {
+	*out_count = dbg_captured_globals_count;
+	return dbg_captured_globals;
 }
 
 #include "_cgo_export.h"
@@ -80,6 +87,13 @@ void frankenphp_debugger_pause(const char *filename, uint32_t lineno) {
 	}
 	dbg_captured_locals =
 	    frankenphp_debugger_get_locals(&dbg_captured_locals_count);
+
+	if (dbg_captured_globals) {
+		frankenphp_debugger_free_globals(dbg_captured_globals,
+		                                 dbg_captured_globals_count);
+	}
+	dbg_captured_globals =
+	    frankenphp_debugger_get_globals(&dbg_captured_globals_count);
 
 	thread_pause_cmd[idx] = -1;
 	go_debugger_notify_breakpoint((GoUintptr)thread_index, (char *)filename,
@@ -131,6 +145,12 @@ void frankenphp_debugger_pause(const char *filename, uint32_t lineno) {
 		                                dbg_captured_locals_count);
 		dbg_captured_locals = NULL;
 		dbg_captured_locals_count = 0;
+	}
+	if (dbg_captured_globals) {
+		frankenphp_debugger_free_globals(dbg_captured_globals,
+		                                 dbg_captured_globals_count);
+		dbg_captured_globals = NULL;
+		dbg_captured_globals_count = 0;
 	}
 
 #ifdef ZEND_MAX_EXECUTION_TIMERS
@@ -455,6 +475,55 @@ void frankenphp_debugger_free_locals(frankenphp_debug_variable_t *vars,
 	free(vars);
 }
 
+frankenphp_debug_variable_t *frankenphp_debugger_get_globals(int *out_count) {
+	zend_array *ht = &EG(symbol_table);
+	if (!ht) {
+		*out_count = 0;
+		return NULL;
+	}
+
+	int count = zend_hash_num_elements(ht);
+	if (count == 0) {
+		*out_count = 0;
+		return NULL;
+	}
+
+	frankenphp_debug_variable_t *vars =
+	    calloc(count, sizeof(frankenphp_debug_variable_t));
+	int i = 0;
+	zend_string *key;
+	zval *val;
+	ZEND_HASH_FOREACH_STR_KEY_VAL(ht, key, val)
+	{
+		if (Z_TYPE_P(val) == IS_INDIRECT)
+			val = Z_INDIRECT_P(val);
+		ZVAL_DEREF(val);
+
+		if (key) {
+			vars[i].name = strdup(ZSTR_VAL(key));
+		} else {
+			vars[i].name = strdup("?");
+		}
+		vars[i].type = Z_TYPE_P(val);
+		vars[i].value = val;
+		i++;
+	}
+	ZEND_HASH_FOREACH_END();
+
+	*out_count = i;
+	return vars;
+}
+
+void frankenphp_debugger_free_globals(frankenphp_debug_variable_t *vars,
+                                      int count) {
+	if (!vars)
+		return;
+	for (int i = 0; i < count; i++) {
+		free((void *)vars[i].name);
+	}
+	free(vars);
+}
+
 const char *frankenphp_debugger_object_class_name(zval *obj) {
 	if (!obj || Z_TYPE_P(obj) != IS_OBJECT)
 		return "";
@@ -499,9 +568,9 @@ frankenphp_debug_variable_t *frankenphp_debugger_object_vars(zval *obj,
 				if (real)
 					name = real + 1;
 			}
-			vars[i].name = name;
+			vars[i].name = strdup(name);
 		} else {
-			vars[i].name = "?";
+			vars[i].name = strdup("?");
 		}
 		vars[i].type = Z_TYPE_P(val);
 		vars[i].value = val;
@@ -509,8 +578,7 @@ frankenphp_debug_variable_t *frankenphp_debugger_object_vars(zval *obj,
 	}
 	ZEND_HASH_FOREACH_END();
 
-	// not releasing ht: name pointers and value pointers reference it, and
-	// memory is reclaimed when the PHP request ends
+	zend_release_properties(ht);
 	*out_count = i;
 	return vars;
 }

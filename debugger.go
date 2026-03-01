@@ -65,10 +65,11 @@ var (
 )
 
 type threadDebugInfo struct {
-	File   string
-	Line   int
-	Stack  []DebugFrame
-	Locals []DebugVariable
+	File    string
+	Line    int
+	Stack   []DebugFrame
+	Locals  []DebugVariable
+	Globals []DebugVariable
 }
 
 type DebuggerStatusInfo struct {
@@ -119,10 +120,11 @@ func go_debugger_notify_breakpoint(threadIndex C.uintptr_t, filename *C.char, li
 
 	stack := readCapturedStack()
 	locals := readCapturedLocals()
+	globals := readCapturedGlobals()
 
 	debugMu.Lock()
 
-	debugThreadInfo[idx] = &threadDebugInfo{File: file, Line: line, Stack: stack, Locals: locals}
+	debugThreadInfo[idx] = &threadDebugInfo{File: file, Line: line, Stack: stack, Locals: locals, Globals: globals}
 
 	thread := phpThreads[idx]
 	thread.state.Set(state.DebugPaused)
@@ -228,6 +230,15 @@ func GetLocals(threadIndex int) []DebugVariable {
 	return nil
 }
 
+func GetGlobals(threadIndex int) []DebugVariable {
+	debugMu.RLock()
+	defer debugMu.RUnlock()
+	if info, ok := debugThreadInfo[threadIndex]; ok {
+		return info.Globals
+	}
+	return nil
+}
+
 func GetFrameVariables(threadIndex, frameIndex int) []DebugVariable {
 	debugMu.RLock()
 	defer debugMu.RUnlock()
@@ -281,6 +292,22 @@ func readCapturedStack() []DebugFrame {
 func readCapturedLocals() []DebugVariable {
 	var cCount C.int
 	cVars := C.frankenphp_debugger_get_captured_locals(&cCount)
+	count := int(cCount)
+	if count == 0 || cVars == nil {
+		return nil
+	}
+
+	cSlice := unsafe.Slice(cVars, count)
+	vars := make([]DebugVariable, count)
+	for i := 0; i < count; i++ {
+		vars[i] = readDebugVariable(&cSlice[i], 0)
+	}
+	return vars
+}
+
+func readCapturedGlobals() []DebugVariable {
+	var cCount C.int
+	cVars := C.frankenphp_debugger_get_captured_globals(&cCount)
 	count := int(cCount)
 	if count == 0 || cVars == nil {
 		return nil
@@ -405,7 +432,7 @@ func readObjectValue(zval *C.zval, depth int) DebugObject {
 	if n == 0 || cVars == nil {
 		return obj
 	}
-	defer C.free(unsafe.Pointer(cVars))
+	defer C.frankenphp_debugger_free_array_vars(cVars, count)
 
 	vars := unsafe.Slice(cVars, n)
 	obj.Properties = make([]DebugVariable, n)

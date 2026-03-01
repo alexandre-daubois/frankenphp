@@ -515,6 +515,166 @@ func TestDAPVariableFormatting(t *testing.T) {
 	}, opts)
 }
 
+func TestDAPExceptionBreakpoint(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(handler func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		status := frankenphp.DebuggerStatus()
+		require.NotEmpty(t, status.DAPListen)
+
+		conn, err := net.DialTimeout("tcp", status.DAPListen, 2*time.Second)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		writer := bufio.NewWriter(conn)
+		reader := bufio.NewReader(conn)
+		seq := 0
+		nextSeq := func() int { seq++; return seq }
+
+		// Initialize
+		dapSend(t, writer, &dap.InitializeRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "initialize",
+			},
+			Arguments: dap.InitializeRequestArguments{AdapterID: "test"},
+		})
+		msg := dapRecv(t, conn, reader)
+		initResp, ok := msg.(*dap.InitializeResponse)
+		require.True(t, ok, "expected InitializeResponse, got %T", msg)
+		require.NotEmpty(t, initResp.Body.ExceptionBreakpointFilters)
+		dapRecv(t, conn, reader) // InitializedEvent
+
+		// Enable uncaught exception breakpoints
+		dapSend(t, writer, &dap.SetExceptionBreakpointsRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "setExceptionBreakpoints",
+			},
+			Arguments: dap.SetExceptionBreakpointsArguments{
+				Filters: []string{"uncaught"},
+			},
+		})
+		msg = dapRecv(t, conn, reader)
+		_, ok = msg.(*dap.SetExceptionBreakpointsResponse)
+		require.True(t, ok, "expected SetExceptionBreakpointsResponse, got %T", msg)
+
+		dapSend(t, writer, &dap.ConfigurationDoneRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "configurationDone",
+			},
+		})
+		dapRecv(t, conn, reader)
+
+		done := make(chan string, 1)
+		go func() {
+			body, _ := testGet("http://example.com/debugger-exception.php", handler, t)
+			done <- body
+		}()
+
+		msg = dapRecv(t, conn, reader)
+		stopped, ok := msg.(*dap.StoppedEvent)
+		require.True(t, ok, "expected StoppedEvent, got %T", msg)
+		assert.Equal(t, "exception", stopped.Body.Reason)
+		assert.Contains(t, stopped.Body.Description, "RuntimeException")
+		assert.Contains(t, stopped.Body.Text, "something went wrong")
+		threadId := stopped.Body.ThreadId
+
+		// Continue past the exception
+		dapSend(t, writer, &dap.ContinueRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "continue",
+			},
+			Arguments: dap.ContinueArguments{ThreadId: threadId},
+		})
+		dapRecv(t, conn, reader) // ContinueResponse
+
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for request to complete")
+		}
+
+		dapSend(t, writer, &dap.DisconnectRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "disconnect",
+			},
+		})
+		dapRecv(t, conn, reader)
+	}, opts)
+}
+
+func TestDAPExceptionCaughtFilter(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(handler func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		status := frankenphp.DebuggerStatus()
+		require.NotEmpty(t, status.DAPListen)
+
+		conn, err := net.DialTimeout("tcp", status.DAPListen, 2*time.Second)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		writer := bufio.NewWriter(conn)
+		reader := bufio.NewReader(conn)
+		seq := 0
+		nextSeq := func() int { seq++; return seq }
+
+		dapSend(t, writer, &dap.InitializeRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "initialize",
+			},
+			Arguments: dap.InitializeRequestArguments{AdapterID: "test"},
+		})
+		dapRecv(t, conn, reader) // InitializeResponse
+		dapRecv(t, conn, reader) // InitializedEvent
+
+		// Only uncaught — caught exception should NOT trigger a stop
+		dapSend(t, writer, &dap.SetExceptionBreakpointsRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "setExceptionBreakpoints",
+			},
+			Arguments: dap.SetExceptionBreakpointsArguments{
+				Filters: []string{"uncaught"},
+			},
+		})
+		dapRecv(t, conn, reader)
+
+		dapSend(t, writer, &dap.ConfigurationDoneRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "configurationDone",
+			},
+		})
+		dapRecv(t, conn, reader)
+
+		// Request a script with a caught exception — should complete without stopping
+		done := make(chan string, 1)
+		go func() {
+			body, _ := testGet("http://example.com/debugger-exception-caught.php", handler, t)
+			done <- body
+		}()
+
+		select {
+		case body := <-done:
+			assert.Contains(t, body, "caught error")
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out — caught exception should not have paused execution")
+		}
+
+		dapSend(t, writer, &dap.DisconnectRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "disconnect",
+			},
+		})
+		dapRecv(t, conn, reader)
+	}, opts)
+}
+
 func propNames(vars []dap.Variable) []string {
 	names := make([]string, len(vars))
 	for i, v := range vars {

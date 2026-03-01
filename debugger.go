@@ -65,11 +65,14 @@ var (
 )
 
 type threadDebugInfo struct {
-	File    string
-	Line    int
-	Stack   []DebugFrame
-	Locals  []DebugVariable
-	Globals []DebugVariable
+	File             string
+	Line             int
+	Stack            []DebugFrame
+	Locals           []DebugVariable
+	Globals          []DebugVariable
+	StopReason       string // "breakpoint" or "exception"
+	ExceptionClass   string
+	ExceptionMessage string
 }
 
 type DebuggerStatusInfo struct {
@@ -124,7 +127,10 @@ func go_debugger_notify_breakpoint(threadIndex C.uintptr_t, filename *C.char, li
 
 	debugMu.Lock()
 
-	debugThreadInfo[idx] = &threadDebugInfo{File: file, Line: line, Stack: stack, Locals: locals, Globals: globals}
+	debugThreadInfo[idx] = &threadDebugInfo{
+		File: file, Line: line, Stack: stack, Locals: locals, Globals: globals,
+		StopReason: "breakpoint",
+	}
 
 	thread := phpThreads[idx]
 	thread.state.Set(state.DebugPaused)
@@ -137,6 +143,44 @@ func go_debugger_notify_breakpoint(threadIndex C.uintptr_t, filename *C.char, li
 		}
 	}
 	debugMu.Unlock()
+}
+
+//export go_debugger_notify_exception
+func go_debugger_notify_exception(threadIndex C.uintptr_t, filename *C.char, lineno C.uint32_t, exClass *C.char, exMessage *C.char) {
+	idx := int(threadIndex)
+	file := C.GoString(filename)
+	line := int(lineno)
+	className := C.GoString(exClass)
+	message := C.GoString(exMessage)
+
+	stack := readCapturedStack()
+	locals := readCapturedLocals()
+	globals := readCapturedGlobals()
+
+	debugMu.Lock()
+
+	debugThreadInfo[idx] = &threadDebugInfo{
+		File: file, Line: line, Stack: stack, Locals: locals, Globals: globals,
+		StopReason:       "exception",
+		ExceptionClass:   className,
+		ExceptionMessage: message,
+	}
+
+	thread := phpThreads[idx]
+	thread.state.Set(state.DebugPaused)
+
+	hit := DebugBreakpointHit{ThreadIndex: idx, File: file, Line: line}
+	for _, l := range debugListeners {
+		select {
+		case l <- hit:
+		default:
+		}
+	}
+	debugMu.Unlock()
+}
+
+func SetExceptionBreakMode(mode exceptionCatchMode) {
+	C.frankenphp_debugger_exception_mode = C.int(mode)
 }
 
 // resumeThread wakes the C thread and cleans up Go-side state

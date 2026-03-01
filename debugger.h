@@ -11,6 +11,7 @@
 #include "zend_execute.h"
 
 extern _Atomic bool frankenphp_debugger_enabled;
+extern _Atomic int frankenphp_debugger_exception_mode;
 
 typedef enum {
 	DBG_RUNNING,
@@ -54,6 +55,9 @@ void frankenphp_debugger_init_thread(int idx);
 void frankenphp_debugger_shutdown(void);
 
 void frankenphp_debugger_pause(const char *filename, uint32_t lineno);
+void frankenphp_debugger_pause_exception(const char *filename, uint32_t lineno,
+                                          const char *exception_class,
+                                          const char *exception_message);
 
 // cmd: 0=continue, 1=step_over, 2=step_into, 3=step_out
 void frankenphp_debugger_resume_thread(int thread_idx, int cmd);

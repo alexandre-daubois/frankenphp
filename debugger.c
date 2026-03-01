@@ -5,9 +5,15 @@
 #include <string.h>
 
 #include "SAPI.h"
+#include "zend_exceptions.h"
 #include "zend_execute.h"
 
 _Atomic bool frankenphp_debugger_enabled = false;
+
+// 0=disabled, 1=uncaught only, 2=all
+_Atomic int frankenphp_debugger_exception_mode = 0;
+
+static void (*original_exception_hook)(zend_object *ex) = NULL;
 
 static void (*original_execute_ex)(zend_execute_data *execute_data) = NULL;
 
@@ -261,12 +267,192 @@ frankenphp_debugger_ext_stmt_handler(zend_execute_data *execute_data) {
 	return ZEND_USER_OPCODE_DISPATCH;
 }
 
+static bool frankenphp_debugger_is_exception_caught(void) {
+	zend_execute_data *ex = EG(current_execute_data);
+	while (ex) {
+		if (ex->func && ZEND_USER_CODE(ex->func->type) &&
+		    ex->opline) {
+			zend_op_array *op = &ex->func->op_array;
+			uint32_t op_num =
+			    (uint32_t)(ex->opline - op->opcodes);
+			for (int i = 0; i < op->last_try_catch; i++) {
+				zend_try_catch_element *tc =
+				    &op->try_catch_array[i];
+				if (op_num >= tc->try_op &&
+				    (tc->catch_op > 0 &&
+				     op_num < tc->catch_op)) {
+					return true;
+				}
+				if (op_num >= tc->try_op &&
+				    (tc->finally_op > 0 &&
+				     op_num < tc->finally_op)) {
+					return true;
+				}
+			}
+		}
+		ex = ex->prev_execute_data;
+	}
+	return false;
+}
+
+static void frankenphp_debugger_exception_hook(zend_object *ex) {
+	if (original_exception_hook) {
+		original_exception_hook(ex);
+	}
+
+	if (!atomic_load_explicit(&frankenphp_debugger_enabled,
+	                          memory_order_relaxed)) {
+		return;
+	}
+
+	int mode = atomic_load_explicit(&frankenphp_debugger_exception_mode,
+	                                memory_order_relaxed);
+	if (mode == 0) {
+		return;
+	}
+
+	bool caught = frankenphp_debugger_is_exception_caught();
+	bool should_break = false;
+	if ((mode & 1) && !caught) {
+		should_break = true;
+	}
+	if ((mode & 2) && caught) {
+		should_break = true;
+	}
+	if (!should_break) {
+		return;
+	}
+
+	const char *class_name = ZSTR_VAL(ex->ce->name);
+
+	zval rv;
+	zval *msg_zv = zend_read_property_ex(
+	    zend_get_exception_base(ex), ex,
+	    ZSTR_KNOWN(ZEND_STR_MESSAGE), 1, &rv);
+	const char *message = "";
+	if (msg_zv && Z_TYPE_P(msg_zv) == IS_STRING) {
+		message = Z_STRVAL_P(msg_zv);
+	}
+
+	zend_execute_data *ed = EG(current_execute_data);
+	const char *filename = "";
+	uint32_t lineno = 0;
+	if (ed && ed->func && ZEND_USER_CODE(ed->func->type) &&
+	    ed->opline) {
+		filename = ZSTR_VAL(ed->func->op_array.filename);
+		lineno = ed->opline->lineno;
+	}
+
+	frankenphp_debugger_pause_exception(filename, lineno, class_name,
+	                                     message);
+}
+
+void frankenphp_debugger_pause_exception(const char *filename,
+                                          uint32_t lineno,
+                                          const char *exception_class,
+                                          const char *exception_message) {
+	int idx = (int)thread_index;
+	dbg_mode = DBG_PAUSED;
+
+#ifdef ZEND_MAX_EXECUTION_TIMERS
+	zend_unset_timeout();
+#endif
+
+	if (dbg_captured_frames) {
+		frankenphp_debugger_free_stack(dbg_captured_frames,
+		                               dbg_captured_depth);
+	}
+	dbg_captured_frames = frankenphp_debugger_get_stack(&dbg_captured_depth);
+
+	if (dbg_captured_locals) {
+		frankenphp_debugger_free_locals(dbg_captured_locals,
+		                                dbg_captured_locals_count);
+	}
+	dbg_captured_locals =
+	    frankenphp_debugger_get_locals(&dbg_captured_locals_count);
+
+	if (dbg_captured_globals) {
+		frankenphp_debugger_free_globals(dbg_captured_globals,
+		                                 dbg_captured_globals_count);
+	}
+	dbg_captured_globals =
+	    frankenphp_debugger_get_globals(&dbg_captured_globals_count);
+
+	thread_pause_cmd[idx] = -1;
+	go_debugger_notify_exception((GoUintptr)thread_index,
+	                              (char *)filename, (GoUint32)lineno,
+	                              (char *)exception_class,
+	                              (char *)exception_message);
+
+	pthread_mutex_lock(&thread_pause_mu[idx]);
+	while (thread_pause_cmd[idx] < 0) {
+		pthread_cond_wait(&thread_pause_cond[idx],
+		                  &thread_pause_mu[idx]);
+	}
+	int cmd = thread_pause_cmd[idx];
+	thread_pause_cmd[idx] = -1;
+	pthread_mutex_unlock(&thread_pause_mu[idx]);
+
+	switch (cmd) {
+	case 1:
+		dbg_mode = DBG_STEP_OVER;
+		dbg_step_depth = frankenphp_debugger_get_stack_depth();
+		dbg_step_start_line = lineno;
+		dbg_step_start_file = filename;
+		break;
+	case 2:
+		dbg_mode = DBG_STEP_INTO;
+		dbg_step_start_line = lineno;
+		dbg_step_start_file = filename;
+		break;
+	case 3:
+		dbg_mode = DBG_STEP_OUT;
+		dbg_step_depth = frankenphp_debugger_get_stack_depth();
+		dbg_step_start_line = 0;
+		dbg_step_start_file = NULL;
+		break;
+	default:
+		dbg_mode = DBG_RUNNING;
+		dbg_step_start_line = 0;
+		dbg_step_start_file = NULL;
+		break;
+	}
+
+	if (dbg_captured_frames) {
+		frankenphp_debugger_free_stack(dbg_captured_frames,
+		                               dbg_captured_depth);
+		dbg_captured_frames = NULL;
+		dbg_captured_depth = 0;
+	}
+	if (dbg_captured_locals) {
+		frankenphp_debugger_free_locals(dbg_captured_locals,
+		                                dbg_captured_locals_count);
+		dbg_captured_locals = NULL;
+		dbg_captured_locals_count = 0;
+	}
+	if (dbg_captured_globals) {
+		frankenphp_debugger_free_globals(dbg_captured_globals,
+		                                 dbg_captured_globals_count);
+		dbg_captured_globals = NULL;
+		dbg_captured_globals_count = 0;
+	}
+
+#ifdef ZEND_MAX_EXECUTION_TIMERS
+	if (PG(max_input_time) != -1) {
+		zend_set_timeout(INI_INT("max_execution_time"), 0);
+	}
+#endif
+}
+
 void frankenphp_debugger_init(void) {
 	original_execute_ex = zend_execute_ex;
 	zend_execute_ex = frankenphp_debugger_execute_ex;
 
 	zend_set_user_opcode_handler(ZEND_EXT_STMT,
 	                             frankenphp_debugger_ext_stmt_handler);
+
+	original_exception_hook = zend_throw_exception_hook;
+	zend_throw_exception_hook = frankenphp_debugger_exception_hook;
 
 	breakpoint_capacity = 32;
 	breakpoints = calloc(breakpoint_capacity, sizeof(frankenphp_breakpoint_t));
@@ -300,6 +486,9 @@ void frankenphp_debugger_shutdown(void) {
 		original_execute_ex = NULL;
 	}
 	zend_set_user_opcode_handler(ZEND_EXT_STMT, NULL);
+
+	zend_throw_exception_hook = original_exception_hook;
+	original_exception_hook = NULL;
 
 	pthread_rwlock_wrlock(&bp_lock);
 	for (int i = 0; i < breakpoint_count; i++) {

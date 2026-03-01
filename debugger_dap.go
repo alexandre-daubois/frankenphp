@@ -16,6 +16,14 @@ type varRef struct {
 	value any // []DebugVariable for scopes, map[string]any or []any for expanded children
 }
 
+type exceptionCatchMode int
+
+const (
+	catchNone     exceptionCatchMode = 0
+	catchUncaught exceptionCatchMode = 1
+	catchCaught   exceptionCatchMode = 2
+)
+
 type dapServer struct {
 	listener   net.Listener
 	mu         sync.Mutex
@@ -89,13 +97,26 @@ func (s *dapServer) eventLoop() {
 				return
 			}
 			threadId := hit.ThreadIndex + 1 // DAP thread IDs are 1-based
+
+			info := getThreadDebugInfo(hit.ThreadIndex)
+			reason := info.StopReason
+			if reason == "" {
+				reason = "breakpoint"
+			}
+
+			body := dap.StoppedEventBody{
+				Reason:            reason,
+				ThreadId:          threadId,
+				AllThreadsStopped: false,
+			}
+			if reason == "exception" {
+				body.Description = info.ExceptionClass
+				body.Text = info.ExceptionClass + ": " + info.ExceptionMessage
+			}
+
 			s.sendEvent(&dap.StoppedEvent{
 				Event: *s.newEvent("stopped"),
-				Body: dap.StoppedEventBody{
-					Reason:            "breakpoint",
-					ThreadId:          threadId,
-					AllThreadsStopped: false,
-				},
+				Body:  body,
 			})
 		}
 	}
@@ -187,6 +208,18 @@ func (s *dapServer) onInitialize(req *dap.InitializeRequest) {
 			SupportsRestartFrame:             false,
 			SupportsStepInTargetsRequest:     false,
 			SupportsDelayedStackTraceLoading: false,
+			ExceptionBreakpointFilters: []dap.ExceptionBreakpointsFilter{
+				{
+					Filter:  "uncaught",
+					Label:   "Uncaught Exceptions",
+					Default: true,
+				},
+				{
+					Filter:  "caught",
+					Label:   "Caught Exceptions",
+					Default: false,
+				},
+			},
 		},
 	})
 	s.sendEvent(&dap.InitializedEvent{
@@ -238,6 +271,26 @@ func (s *dapServer) onSetBreakpoints(req *dap.SetBreakpointsRequest) {
 }
 
 func (s *dapServer) onSetExceptionBreakpoints(req *dap.SetExceptionBreakpointsRequest) {
+	hasCaught := false
+	hasUncaught := false
+	for _, f := range req.Arguments.Filters {
+		switch f {
+		case "caught":
+			hasCaught = true
+		case "uncaught":
+			hasUncaught = true
+		}
+	}
+
+	mode := catchNone
+	if hasUncaught {
+		mode |= catchUncaught
+	}
+	if hasCaught {
+		mode |= catchCaught
+	}
+	SetExceptionBreakMode(mode)
+
 	s.sendResponse(&dap.SetExceptionBreakpointsResponse{
 		Response: *s.newResponse(req.Seq, req.Command),
 	})
@@ -494,6 +547,7 @@ func (s *dapServer) onPause(req *dap.PauseRequest) {
 
 func (s *dapServer) onDisconnect(req *dap.DisconnectRequest) {
 	s.clearVarRefs()
+	SetExceptionBreakMode(catchNone)
 
 	debugMu.RLock()
 	for idx := range debugThreadInfo {

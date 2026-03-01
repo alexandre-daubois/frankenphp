@@ -52,16 +52,25 @@ type DebugResource struct {
 }
 
 type BreakpointInfo struct {
-	ID   int    `json:"id"`
-	File string `json:"file"`
-	Line int    `json:"line"`
+	ID           int    `json:"id"`
+	File         string `json:"file"`
+	Line         int    `json:"line"`
+	Condition    string `json:"condition,omitempty"`
+	HitCondition string `json:"hitCondition,omitempty"`
+	LogMessage   string `json:"logMessage,omitempty"`
+}
+
+type DebugOutputMessage struct {
+	ThreadIndex int
+	Output      string
 }
 
 var (
-	debugMu          sync.RWMutex
-	debugListeners   []chan DebugBreakpointHit
-	debugThreadInfo  map[int]*threadDebugInfo
-	debugBreakpoints map[int]BreakpointInfo
+	debugMu              sync.RWMutex
+	debugListeners       []chan DebugBreakpointHit
+	debugOutputListeners []chan DebugOutputMessage
+	debugThreadInfo      map[int]*threadDebugInfo
+	debugBreakpoints     map[int]BreakpointInfo
 )
 
 type threadDebugInfo struct {
@@ -101,15 +110,18 @@ func initDebugger() {
 func shutdownDebugger() {
 	debugMu.Lock()
 	defer debugMu.Unlock()
-	// Resume all paused threads
 	for idx := range debugThreadInfo {
 		C.frankenphp_debugger_resume_thread(C.int(idx), 0)
 	}
 	for _, l := range debugListeners {
 		close(l)
 	}
+	for _, l := range debugOutputListeners {
+		close(l)
+	}
 	debugThreadInfo = nil
 	debugListeners = nil
+	debugOutputListeners = nil
 }
 
 // go_debugger_notify_breakpoint is called from C when a breakpoint is hit.
@@ -179,6 +191,30 @@ func go_debugger_notify_exception(threadIndex C.uintptr_t, filename *C.char, lin
 	debugMu.Unlock()
 }
 
+//export go_debugger_notify_output
+func go_debugger_notify_output(threadIndex C.uintptr_t, message *C.char) {
+	idx := int(threadIndex)
+	output := C.GoString(message)
+
+	debugMu.RLock()
+	msg := DebugOutputMessage{ThreadIndex: idx, Output: output}
+	for _, l := range debugOutputListeners {
+		select {
+		case l <- msg:
+		default:
+		}
+	}
+	debugMu.RUnlock()
+}
+
+func SubscribeOutput() <-chan DebugOutputMessage {
+	ch := make(chan DebugOutputMessage, 64)
+	debugMu.Lock()
+	debugOutputListeners = append(debugOutputListeners, ch)
+	debugMu.Unlock()
+	return ch
+}
+
 func SetExceptionBreakMode(mode exceptionCatchMode) {
 	C.frankenphp_debugger_exception_mode = C.int(mode)
 }
@@ -195,7 +231,7 @@ func resumeThread(threadIndex int, cmd debugCommand) {
 	thread.state.Set(state.Ready)
 }
 
-func SetBreakpoint(filename string, line int) int {
+func SetBreakpoint(filename string, line int, condition, hitCondition, logMessage string) int {
 	if resolved, err := filepath.EvalSymlinks(filename); err == nil {
 		if abs, err := filepath.Abs(resolved); err == nil {
 			filename = abs
@@ -204,10 +240,21 @@ func SetBreakpoint(filename string, line int) int {
 
 	cFilename := C.CString(filename)
 	defer C.free(unsafe.Pointer(cFilename))
-	id := int(C.frankenphp_debugger_add_breakpoint(cFilename, C.uint32_t(line)))
+	cCondition := C.CString(condition)
+	defer C.free(unsafe.Pointer(cCondition))
+	cHitCondition := C.CString(hitCondition)
+	defer C.free(unsafe.Pointer(cHitCondition))
+	cLogMessage := C.CString(logMessage)
+	defer C.free(unsafe.Pointer(cLogMessage))
+
+	id := int(C.frankenphp_debugger_add_breakpoint(cFilename, C.uint32_t(line),
+		cCondition, cHitCondition, cLogMessage))
 
 	debugMu.Lock()
-	debugBreakpoints[id] = BreakpointInfo{ID: id, File: filename, Line: line}
+	debugBreakpoints[id] = BreakpointInfo{
+		ID: id, File: filename, Line: line,
+		Condition: condition, HitCondition: hitCondition, LogMessage: logMessage,
+	}
 	debugMu.Unlock()
 
 	return id

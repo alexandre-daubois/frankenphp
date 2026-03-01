@@ -95,7 +95,7 @@ func (admin *FrankenPHPAdmin) debugBreakpoints(w http.ResponseWriter, r *http.Re
 		if req.File == "" || req.Line <= 0 {
 			return admin.error(http.StatusBadRequest, fmt.Errorf("file and line (>0) are required"))
 		}
-		id := frankenphp.SetBreakpoint(req.File, req.Line)
+		id := frankenphp.SetBreakpoint(req.File, req.Line, "", "", "")
 		return admin.json(w, frankenphp.BreakpointInfo{ID: id, File: req.File, Line: req.Line})
 
 	case http.MethodDelete:

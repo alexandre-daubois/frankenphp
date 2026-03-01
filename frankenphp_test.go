@@ -1304,7 +1304,7 @@ func TestDebuggerBreakpointHitAndContinue(t *testing.T) {
 
 		cwd, _ := os.Getwd()
 		bpFile := filepath.Join(cwd, "testdata", "debugger-breakpoint.php")
-		frankenphp.SetBreakpoint(bpFile, 3)
+		frankenphp.SetBreakpoint(bpFile, 3, "", "", "")
 
 		type result struct {
 			body string
@@ -1355,7 +1355,7 @@ func TestDebuggerStackTrace(t *testing.T) {
 
 		cwd, _ := os.Getwd()
 		bpFile := filepath.Join(cwd, "testdata", "debugger-breakpoint.php")
-		frankenphp.SetBreakpoint(bpFile, 4)
+		frankenphp.SetBreakpoint(bpFile, 4, "", "", "")
 
 		done := make(chan string, 1)
 		go func() {
@@ -1392,7 +1392,7 @@ func TestDebuggerLocals(t *testing.T) {
 
 		cwd, _ := os.Getwd()
 		bpFile := filepath.Join(cwd, "testdata", "debugger-breakpoint.php")
-		frankenphp.SetBreakpoint(bpFile, 4)
+		frankenphp.SetBreakpoint(bpFile, 4, "", "", "")
 
 		done := make(chan string, 1)
 		go func() {
@@ -1443,7 +1443,7 @@ func TestDebuggerStepOver(t *testing.T) {
 
 		cwd, _ := os.Getwd()
 		bpFile := filepath.Join(cwd, "testdata", "debugger-breakpoint.php")
-		bpID := frankenphp.SetBreakpoint(bpFile, 2)
+		bpID := frankenphp.SetBreakpoint(bpFile, 2, "", "", "")
 
 		done := make(chan string, 1)
 		go func() {
@@ -1486,8 +1486,8 @@ func TestDebuggerStepOver(t *testing.T) {
 func TestDebuggerBreakpointSetRemoveClear(t *testing.T) {
 	opts := debuggerTestOpts()
 	runTest(t, func(_ func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
-		id1 := frankenphp.SetBreakpoint("/test/file.php", 10)
-		id2 := frankenphp.SetBreakpoint("/test/file.php", 20)
+		id1 := frankenphp.SetBreakpoint("/test/file.php", 10, "", "", "")
+		id2 := frankenphp.SetBreakpoint("/test/file.php", 20, "", "", "")
 
 		bps := frankenphp.ListBreakpoints()
 		assert.Len(t, bps, 2)
@@ -1513,7 +1513,7 @@ func TestDebuggerWorkerBreakpoint(t *testing.T) {
 
 		cwd, _ := os.Getwd()
 		bpFile := filepath.Join(cwd, "testdata", "debugger-worker-breakpoint.php")
-		frankenphp.SetBreakpoint(bpFile, 5)
+		frankenphp.SetBreakpoint(bpFile, 5, "", "", "")
 
 		done := make(chan string, 1)
 		go func() {
@@ -1557,7 +1557,7 @@ func TestDebuggerVariableScalars(t *testing.T) {
 		cwd, _ := os.Getwd()
 		bpFile := filepath.Join(cwd, "testdata", "debugger-variables.php")
 		// Line 15: inner(21); — all global scalars are defined by this point
-		frankenphp.SetBreakpoint(bpFile, 15)
+		frankenphp.SetBreakpoint(bpFile, 15, "", "", "")
 
 		done := make(chan string, 1)
 		go func() {
@@ -1631,7 +1631,7 @@ func TestDebuggerVariableArrays(t *testing.T) {
 
 		cwd, _ := os.Getwd()
 		bpFile := filepath.Join(cwd, "testdata", "debugger-variables.php")
-		frankenphp.SetBreakpoint(bpFile, 15)
+		frankenphp.SetBreakpoint(bpFile, 15, "", "", "")
 
 		done := make(chan string, 1)
 		go func() {
@@ -1710,7 +1710,7 @@ func TestDebuggerVariableObjects(t *testing.T) {
 		cwd, _ := os.Getwd()
 		bpFile := filepath.Join(cwd, "testdata", "debugger-objects.php")
 		// Line 11: echo "ok"; — $pt is defined
-		frankenphp.SetBreakpoint(bpFile, 11)
+		frankenphp.SetBreakpoint(bpFile, 11, "", "", "")
 
 		done := make(chan string, 1)
 		go func() {
@@ -1778,7 +1778,7 @@ func TestDebuggerVariableResources(t *testing.T) {
 
 		cwd, _ := os.Getwd()
 		bpFile := filepath.Join(cwd, "testdata", "debugger-variables.php")
-		frankenphp.SetBreakpoint(bpFile, 15)
+		frankenphp.SetBreakpoint(bpFile, 15, "", "", "")
 
 		done := make(chan string, 1)
 		go func() {
@@ -1829,7 +1829,7 @@ func TestDebuggerFrameVariables(t *testing.T) {
 		cwd, _ := os.Getwd()
 		bpFile := filepath.Join(cwd, "testdata", "debugger-variables.php")
 		// Line 4: echo "ok"; inside inner() — both inner's frame and global frame exist
-		frankenphp.SetBreakpoint(bpFile, 4)
+		frankenphp.SetBreakpoint(bpFile, 4, "", "", "")
 
 		done := make(chan string, 1)
 		go func() {

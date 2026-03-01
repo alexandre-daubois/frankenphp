@@ -59,18 +59,196 @@ static pthread_mutex_t thread_pause_mu[MAX_DEBUG_THREADS];
 static pthread_cond_t thread_pause_cond[MAX_DEBUG_THREADS];
 static volatile int thread_pause_cmd[MAX_DEBUG_THREADS]; // -1 = paused/waiting, >= 0 = command
 
-static bool check_breakpoint(const char *filename, uint32_t lineno) {
-	pthread_rwlock_rdlock(&bp_lock);
-	bool hit = false;
+typedef struct {
+	int id;
+	bool should_break;
+	char *log_output;
+} bp_check_result_t;
+
+static bool evaluate_php_condition(const char *expr) {
+	zend_rebuild_symbol_table();
+	int orig_no_ext = EG(no_extensions);
+	EG(no_extensions) = 1;
+
+	zval retval;
+	ZVAL_UNDEF(&retval);
+	zend_result res = zend_eval_string_ex((char *)expr, &retval,
+	                                       "debugger condition", 1);
+	EG(no_extensions) = orig_no_ext;
+
+	if (res == FAILURE) {
+		zval_ptr_dtor(&retval);
+		return true;
+	}
+
+	bool result = zend_is_true(&retval);
+	zval_ptr_dtor(&retval);
+	return result;
+}
+
+static bool check_hit_condition(uint32_t hit_count, const char *cond) {
+	if (!cond || cond[0] == '\0') {
+		return true;
+	}
+
+	const char *p = cond;
+	while (*p == ' ') p++;
+
+	char op[4] = {0};
+	int oi = 0;
+	while (*p && !(*p >= '0' && *p <= '9') && oi < 3) {
+		if (*p != ' ') {
+			op[oi++] = *p;
+		}
+		p++;
+	}
+	while (*p == ' ') p++;
+
+	unsigned long target = strtoul(p, NULL, 10);
+
+	if (op[0] == '>' && op[1] == '=') return hit_count >= target;
+	if (op[0] == '<' && op[1] == '=') return hit_count <= target;
+	if (op[0] == '!' && op[1] == '=') return hit_count != target;
+	if (op[0] == '=' && op[1] == '=') return hit_count == target;
+	if (op[0] == '>')                 return hit_count > target;
+	if (op[0] == '<')                 return hit_count < target;
+	if (op[0] == '%')                 return target > 0 && (hit_count % target) == 0;
+
+	return hit_count == target;
+}
+
+static char *format_log_message(const char *msg) {
+	size_t len = strlen(msg);
+	size_t cap = len * 2 + 1;
+	char *out = malloc(cap);
+	size_t oi = 0;
+
+	for (size_t i = 0; i < len; i++) {
+		if (msg[i] == '{') {
+			int depth = 1;
+			size_t end = i + 1;
+			while (end < len && depth > 0) {
+				if (msg[end] == '{') depth++;
+				else if (msg[end] == '}') depth--;
+				if (depth > 0) end++;
+			}
+			if (end < len) {
+				size_t expr_len = end - i - 1;
+				char *expr = malloc(expr_len + 1);
+				memcpy(expr, msg + i + 1, expr_len);
+				expr[expr_len] = '\0';
+
+				zend_rebuild_symbol_table();
+				int orig_no_ext = EG(no_extensions);
+				EG(no_extensions) = 1;
+
+				zval retval;
+				ZVAL_UNDEF(&retval);
+				zend_result res = zend_eval_string_ex(
+				    expr, &retval, "debugger logpoint", 1);
+				EG(no_extensions) = orig_no_ext;
+
+				const char *val_str = NULL;
+				zend_string *tmp_str = NULL;
+				if (res == SUCCESS) {
+					tmp_str = zval_get_string(&retval);
+					val_str = ZSTR_VAL(tmp_str);
+				}
+
+				if (val_str) {
+					size_t vl = strlen(val_str);
+					while (oi + vl + 1 >= cap) {
+						cap *= 2;
+						out = realloc(out, cap);
+					}
+					memcpy(out + oi, val_str, vl);
+					oi += vl;
+				} else {
+					size_t chunk = end - i + 1;
+					while (oi + chunk + 1 >= cap) {
+						cap *= 2;
+						out = realloc(out, cap);
+					}
+					memcpy(out + oi, msg + i, chunk);
+					oi += chunk;
+				}
+
+				if (tmp_str) zend_string_release(tmp_str);
+				zval_ptr_dtor(&retval);
+				free(expr);
+				i = end;
+				continue;
+			}
+		}
+
+		if (oi + 2 >= cap) {
+			cap *= 2;
+			out = realloc(out, cap);
+		}
+		out[oi++] = msg[i];
+	}
+
+	out[oi] = '\0';
+	return out;
+}
+
+static bp_check_result_t check_breakpoint_conditional(const char *filename,
+                                                       uint32_t lineno) {
+	bp_check_result_t result = {0, false, NULL};
+
+	char *condition = NULL;
+	char *hit_condition = NULL;
+	char *log_message = NULL;
+	uint32_t hit_count = 0;
+	bool found = false;
+
+	pthread_rwlock_wrlock(&bp_lock);
 	for (int i = 0; i < breakpoint_count; i++) {
 		if (breakpoints[i].enabled && breakpoints[i].lineno == lineno &&
 		    strcmp(breakpoints[i].filename, filename) == 0) {
-			hit = true;
+			breakpoints[i].hit_count++;
+			hit_count = breakpoints[i].hit_count;
+			result.id = breakpoints[i].id;
+			if (breakpoints[i].condition)
+				condition = strdup(breakpoints[i].condition);
+			if (breakpoints[i].hit_condition)
+				hit_condition = strdup(breakpoints[i].hit_condition);
+			if (breakpoints[i].log_message)
+				log_message = strdup(breakpoints[i].log_message);
+			found = true;
 			break;
 		}
 	}
 	pthread_rwlock_unlock(&bp_lock);
-	return hit;
+
+	if (!found) {
+		return result;
+	}
+
+	if (hit_condition && !check_hit_condition(hit_count, hit_condition)) {
+		free(condition);
+		free(hit_condition);
+		free(log_message);
+		return result;
+	}
+
+	if (condition && !evaluate_php_condition(condition)) {
+		free(condition);
+		free(hit_condition);
+		free(log_message);
+		return result;
+	}
+
+	if (log_message) {
+		result.log_output = format_log_message(log_message);
+	} else {
+		result.should_break = true;
+	}
+
+	free(condition);
+	free(hit_condition);
+	free(log_message);
+	return result;
 }
 
 void frankenphp_debugger_pause(const char *filename, uint32_t lineno) {
@@ -181,7 +359,14 @@ static void frankenphp_debugger_execute_ex(zend_execute_data *execute_data) {
 
 		bool should_break = false;
 
-		if (check_breakpoint(filename, lineno)) {
+		bp_check_result_t bp_result =
+		    check_breakpoint_conditional(filename, lineno);
+		if (bp_result.log_output) {
+			go_debugger_notify_output(
+			    (GoUintptr)thread_index,
+			    bp_result.log_output);
+			free(bp_result.log_output);
+		} else if (bp_result.should_break) {
 			should_break = true;
 		}
 
@@ -234,7 +419,14 @@ frankenphp_debugger_ext_stmt_handler(zend_execute_data *execute_data) {
 
 	bool should_break = false;
 
-	if (check_breakpoint(filename, lineno)) {
+	bp_check_result_t bp_result =
+	    check_breakpoint_conditional(filename, lineno);
+	if (bp_result.log_output) {
+		go_debugger_notify_output(
+		    (GoUintptr)thread_index,
+		    bp_result.log_output);
+		free(bp_result.log_output);
+	} else if (bp_result.should_break) {
 		should_break = true;
 	}
 
@@ -480,6 +672,8 @@ void frankenphp_debugger_resume_thread(int thread_idx, int cmd) {
 	pthread_mutex_unlock(&thread_pause_mu[thread_idx]);
 }
 
+static void free_breakpoint_fields(frankenphp_breakpoint_t *bp);
+
 void frankenphp_debugger_shutdown(void) {
 	if (original_execute_ex) {
 		zend_execute_ex = original_execute_ex;
@@ -492,7 +686,7 @@ void frankenphp_debugger_shutdown(void) {
 
 	pthread_rwlock_wrlock(&bp_lock);
 	for (int i = 0; i < breakpoint_count; i++) {
-		free(breakpoints[i].filename);
+		free_breakpoint_fields(&breakpoints[i]);
 	}
 	free(breakpoints);
 	breakpoints = NULL;
@@ -501,7 +695,10 @@ void frankenphp_debugger_shutdown(void) {
 	pthread_rwlock_unlock(&bp_lock);
 }
 
-int frankenphp_debugger_add_breakpoint(const char *filename, uint32_t lineno) {
+int frankenphp_debugger_add_breakpoint(const char *filename, uint32_t lineno,
+                                        const char *condition,
+                                        const char *hit_condition,
+                                        const char *log_message) {
 	pthread_rwlock_wrlock(&bp_lock);
 
 	if (breakpoint_count >= breakpoint_capacity) {
@@ -512,26 +709,38 @@ int frankenphp_debugger_add_breakpoint(const char *filename, uint32_t lineno) {
 	}
 
 	int id = next_breakpoint_id++;
+	frankenphp_breakpoint_t *bp = &breakpoints[breakpoint_count];
 	char resolved[PATH_MAX];
 	if (realpath(filename, resolved) != NULL) {
-		breakpoints[breakpoint_count].filename = strdup(resolved);
+		bp->filename = strdup(resolved);
 	} else {
-		breakpoints[breakpoint_count].filename = strdup(filename);
+		bp->filename = strdup(filename);
 	}
-	breakpoints[breakpoint_count].lineno = lineno;
-	breakpoints[breakpoint_count].id = id;
-	breakpoints[breakpoint_count].enabled = true;
+	bp->lineno = lineno;
+	bp->id = id;
+	bp->enabled = true;
+	bp->condition = (condition && condition[0]) ? strdup(condition) : NULL;
+	bp->hit_condition = (hit_condition && hit_condition[0]) ? strdup(hit_condition) : NULL;
+	bp->log_message = (log_message && log_message[0]) ? strdup(log_message) : NULL;
+	bp->hit_count = 0;
 	breakpoint_count++;
 
 	pthread_rwlock_unlock(&bp_lock);
 	return id;
 }
 
+static void free_breakpoint_fields(frankenphp_breakpoint_t *bp) {
+	free(bp->filename);
+	free(bp->condition);
+	free(bp->hit_condition);
+	free(bp->log_message);
+}
+
 bool frankenphp_debugger_remove_breakpoint(int breakpoint_id) {
 	pthread_rwlock_wrlock(&bp_lock);
 	for (int i = 0; i < breakpoint_count; i++) {
 		if (breakpoints[i].id == breakpoint_id) {
-			free(breakpoints[i].filename);
+			free_breakpoint_fields(&breakpoints[i]);
 			breakpoints[i] = breakpoints[breakpoint_count - 1];
 			breakpoint_count--;
 			pthread_rwlock_unlock(&bp_lock);
@@ -545,7 +754,7 @@ bool frankenphp_debugger_remove_breakpoint(int breakpoint_id) {
 void frankenphp_debugger_clear_breakpoints(void) {
 	pthread_rwlock_wrlock(&bp_lock);
 	for (int i = 0; i < breakpoint_count; i++) {
-		free(breakpoints[i].filename);
+		free_breakpoint_fields(&breakpoints[i]);
 	}
 	breakpoint_count = 0;
 	pthread_rwlock_unlock(&bp_lock);

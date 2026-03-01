@@ -675,6 +675,463 @@ func TestDAPExceptionCaughtFilter(t *testing.T) {
 	}, opts)
 }
 
+func dapInitAndConfigure(t *testing.T, conn net.Conn, writer *bufio.Writer, reader *bufio.Reader, nextSeq func() int) {
+	t.Helper()
+	dapSend(t, writer, &dap.InitializeRequest{
+		Request: dap.Request{
+			ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+			Command:         "initialize",
+		},
+		Arguments: dap.InitializeRequestArguments{AdapterID: "test"},
+	})
+	dapRecv(t, conn, reader) // InitializeResponse
+	dapRecv(t, conn, reader) // InitializedEvent
+
+	dapSend(t, writer, &dap.ConfigurationDoneRequest{
+		Request: dap.Request{
+			ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+			Command:         "configurationDone",
+		},
+	})
+	dapRecv(t, conn, reader) // ConfigurationDoneResponse
+}
+
+func TestDAPConditionalBreakpoint(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(handler func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		status := frankenphp.DebuggerStatus()
+		require.NotEmpty(t, status.DAPListen)
+
+		conn, err := net.DialTimeout("tcp", status.DAPListen, 2*time.Second)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		writer := bufio.NewWriter(conn)
+		reader := bufio.NewReader(conn)
+		seq := 0
+		nextSeq := func() int { seq++; return seq }
+
+		dapInitAndConfigure(t, conn, writer, reader, nextSeq)
+
+		cwd, _ := os.Getwd()
+		bpFile := filepath.Join(cwd, "testdata", "debugger-conditional.php")
+		dapSend(t, writer, &dap.SetBreakpointsRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "setBreakpoints",
+			},
+			Arguments: dap.SetBreakpointsArguments{
+				Source: dap.Source{Path: bpFile},
+				Breakpoints: []dap.SourceBreakpoint{{
+					Line:      5,
+					Condition: "$i == 5",
+				}},
+			},
+		})
+		msg := dapRecv(t, conn, reader)
+		bpResp, ok := msg.(*dap.SetBreakpointsResponse)
+		require.True(t, ok, "expected SetBreakpointsResponse, got %T", msg)
+		require.Len(t, bpResp.Body.Breakpoints, 1)
+		assert.True(t, bpResp.Body.Breakpoints[0].Verified)
+
+		done := make(chan string, 1)
+		go func() {
+			body, _ := testGet("http://example.com/debugger-conditional.php", handler, t)
+			done <- body
+		}()
+
+		// Should stop exactly once when $i == 5
+		msg = dapRecv(t, conn, reader)
+		stopped, ok := msg.(*dap.StoppedEvent)
+		require.True(t, ok, "expected StoppedEvent, got %T", msg)
+		threadId := stopped.Body.ThreadId
+
+		// Verify $i == 5 by inspecting variables
+		dapSend(t, writer, &dap.StackTraceRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "stackTrace",
+			},
+			Arguments: dap.StackTraceArguments{ThreadId: threadId},
+		})
+		msg = dapRecv(t, conn, reader)
+		stackResp := msg.(*dap.StackTraceResponse)
+		frameId := stackResp.Body.StackFrames[0].Id
+
+		dapSend(t, writer, &dap.ScopesRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "scopes",
+			},
+			Arguments: dap.ScopesArguments{FrameId: frameId},
+		})
+		msg = dapRecv(t, conn, reader)
+		scopesResp := msg.(*dap.ScopesResponse)
+		localsRef := scopesResp.Body.Scopes[0].VariablesReference
+
+		dapSend(t, writer, &dap.VariablesRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "variables",
+			},
+			Arguments: dap.VariablesArguments{VariablesReference: localsRef},
+		})
+		msg = dapRecv(t, conn, reader)
+		varsResp := msg.(*dap.VariablesResponse)
+		varByName := make(map[string]dap.Variable)
+		for _, v := range varsResp.Body.Variables {
+			varByName[v.Name] = v
+		}
+		if v, ok := varByName["i"]; ok {
+			assert.Equal(t, "5", v.Value)
+		} else {
+			t.Error("expected variable $i")
+		}
+
+		dapSend(t, writer, &dap.ContinueRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "continue",
+			},
+			Arguments: dap.ContinueArguments{ThreadId: threadId},
+		})
+		dapRecv(t, conn, reader) // ContinueResponse
+
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for request to complete")
+		}
+
+		dapSend(t, writer, &dap.DisconnectRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "disconnect",
+			},
+		})
+		dapRecv(t, conn, reader)
+		frankenphp.ClearBreakpoints()
+	}, opts)
+}
+
+func TestDAPHitCountBreakpoint(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(handler func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		status := frankenphp.DebuggerStatus()
+		require.NotEmpty(t, status.DAPListen)
+
+		conn, err := net.DialTimeout("tcp", status.DAPListen, 2*time.Second)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		writer := bufio.NewWriter(conn)
+		reader := bufio.NewReader(conn)
+		seq := 0
+		nextSeq := func() int { seq++; return seq }
+
+		dapInitAndConfigure(t, conn, writer, reader, nextSeq)
+
+		cwd, _ := os.Getwd()
+		bpFile := filepath.Join(cwd, "testdata", "debugger-conditional.php")
+		dapSend(t, writer, &dap.SetBreakpointsRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "setBreakpoints",
+			},
+			Arguments: dap.SetBreakpointsArguments{
+				Source: dap.Source{Path: bpFile},
+				Breakpoints: []dap.SourceBreakpoint{{
+					Line:         5,
+					HitCondition: "3",
+				}},
+			},
+		})
+		dapRecv(t, conn, reader) // SetBreakpointsResponse
+
+		done := make(chan string, 1)
+		go func() {
+			body, _ := testGet("http://example.com/debugger-conditional.php", handler, t)
+			done <- body
+		}()
+
+		// Should stop on 3rd hit (when $i == 2, since $i starts at 0)
+		msg := dapRecv(t, conn, reader)
+		stopped, ok := msg.(*dap.StoppedEvent)
+		require.True(t, ok, "expected StoppedEvent, got %T", msg)
+		threadId := stopped.Body.ThreadId
+
+		// Verify $counter == 3 (hit_count == 3)
+		dapSend(t, writer, &dap.StackTraceRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "stackTrace",
+			},
+			Arguments: dap.StackTraceArguments{ThreadId: threadId},
+		})
+		msg = dapRecv(t, conn, reader)
+		stackResp := msg.(*dap.StackTraceResponse)
+		frameId := stackResp.Body.StackFrames[0].Id
+
+		dapSend(t, writer, &dap.ScopesRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "scopes",
+			},
+			Arguments: dap.ScopesArguments{FrameId: frameId},
+		})
+		msg = dapRecv(t, conn, reader)
+		scopesResp := msg.(*dap.ScopesResponse)
+		localsRef := scopesResp.Body.Scopes[0].VariablesReference
+
+		dapSend(t, writer, &dap.VariablesRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "variables",
+			},
+			Arguments: dap.VariablesArguments{VariablesReference: localsRef},
+		})
+		msg = dapRecv(t, conn, reader)
+		varsResp := msg.(*dap.VariablesResponse)
+		varByName := make(map[string]dap.Variable)
+		for _, v := range varsResp.Body.Variables {
+			varByName[v.Name] = v
+		}
+		if v, ok := varByName["i"]; ok {
+			assert.Equal(t, "2", v.Value, "expected $i==2 on 3rd hit (i starts at 0)")
+		} else {
+			t.Error("expected variable $i")
+		}
+
+		dapSend(t, writer, &dap.ContinueRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "continue",
+			},
+			Arguments: dap.ContinueArguments{ThreadId: threadId},
+		})
+		dapRecv(t, conn, reader) // ContinueResponse
+
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for request to complete")
+		}
+
+		dapSend(t, writer, &dap.DisconnectRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "disconnect",
+			},
+		})
+		dapRecv(t, conn, reader)
+		frankenphp.ClearBreakpoints()
+	}, opts)
+}
+
+func TestDAPLogpoint(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(handler func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		status := frankenphp.DebuggerStatus()
+		require.NotEmpty(t, status.DAPListen)
+
+		conn, err := net.DialTimeout("tcp", status.DAPListen, 2*time.Second)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		writer := bufio.NewWriter(conn)
+		reader := bufio.NewReader(conn)
+		seq := 0
+		nextSeq := func() int { seq++; return seq }
+
+		dapInitAndConfigure(t, conn, writer, reader, nextSeq)
+
+		cwd, _ := os.Getwd()
+		bpFile := filepath.Join(cwd, "testdata", "debugger-conditional.php")
+		dapSend(t, writer, &dap.SetBreakpointsRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "setBreakpoints",
+			},
+			Arguments: dap.SetBreakpointsArguments{
+				Source: dap.Source{Path: bpFile},
+				Breakpoints: []dap.SourceBreakpoint{{
+					Line:       5,
+					LogMessage: "counter={$counter}",
+				}},
+			},
+		})
+		dapRecv(t, conn, reader) // SetBreakpointsResponse
+
+		done := make(chan string, 1)
+		go func() {
+			body, _ := testGet("http://example.com/debugger-conditional.php", handler, t)
+			done <- body
+		}()
+
+		// Logpoints should produce OutputEvents, not StoppedEvents.
+		// Collect output events until the request finishes.
+		var outputs []string
+		timeout := time.After(5 * time.Second)
+	loop:
+		for {
+			select {
+			case <-done:
+				// Drain remaining output events briefly
+				drainTimeout := time.After(500 * time.Millisecond)
+			drain:
+				for {
+					select {
+					case <-drainTimeout:
+						break drain
+					default:
+						conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+						msg, err := dap.ReadProtocolMessage(reader)
+						if err != nil {
+							break drain
+						}
+						if out, ok := msg.(*dap.OutputEvent); ok {
+							outputs = append(outputs, out.Body.Output)
+						}
+					}
+				}
+				break loop
+			case <-timeout:
+				t.Fatal("timed out waiting for request to complete")
+			default:
+				conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+				msg, err := dap.ReadProtocolMessage(reader)
+				if err != nil {
+					continue
+				}
+				switch m := msg.(type) {
+				case *dap.OutputEvent:
+					outputs = append(outputs, m.Body.Output)
+				case *dap.StoppedEvent:
+					t.Fatal("logpoint should not produce a StoppedEvent")
+				}
+			}
+		}
+
+		assert.GreaterOrEqual(t, len(outputs), 1, "expected at least one output event from logpoint")
+		// Verify the output contains counter values
+		found := false
+		for _, o := range outputs {
+			if assert.ObjectsAreEqual("counter=1\n", o) {
+				found = true
+			}
+		}
+		assert.True(t, found, "expected output 'counter=1', got: %v", outputs)
+
+		dapSend(t, writer, &dap.DisconnectRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "disconnect",
+			},
+		})
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		dap.ReadProtocolMessage(reader) // DisconnectResponse (best effort)
+		frankenphp.ClearBreakpoints()
+	}, opts)
+}
+
+func TestDAPLogpointNestedBraces(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(handler func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		status := frankenphp.DebuggerStatus()
+		require.NotEmpty(t, status.DAPListen)
+
+		conn, err := net.DialTimeout("tcp", status.DAPListen, 2*time.Second)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		writer := bufio.NewWriter(conn)
+		reader := bufio.NewReader(conn)
+		seq := 0
+		nextSeq := func() int { seq++; return seq }
+
+		dapInitAndConfigure(t, conn, writer, reader, nextSeq)
+
+		cwd, _ := os.Getwd()
+		bpFile := filepath.Join(cwd, "testdata", "debugger-conditional.php")
+		// $arr = [10, 20, 30] is defined on line 3; logpoint with nested braces
+		dapSend(t, writer, &dap.SetBreakpointsRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "setBreakpoints",
+			},
+			Arguments: dap.SetBreakpointsArguments{
+				Source: dap.Source{Path: bpFile},
+				Breakpoints: []dap.SourceBreakpoint{{
+					Line:       5,
+					LogMessage: "sum={array_sum(array_map(function($x) { return $x * 2; }, $arr))}",
+				}},
+			},
+		})
+		dapRecv(t, conn, reader) // SetBreakpointsResponse
+
+		done := make(chan string, 1)
+		go func() {
+			body, _ := testGet("http://example.com/debugger-conditional.php", handler, t)
+			done <- body
+		}()
+
+		var outputs []string
+		timeout := time.After(5 * time.Second)
+	loop:
+		for {
+			select {
+			case <-done:
+				drainTimeout := time.After(500 * time.Millisecond)
+			drain:
+				for {
+					select {
+					case <-drainTimeout:
+						break drain
+					default:
+						conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+						msg, err := dap.ReadProtocolMessage(reader)
+						if err != nil {
+							break drain
+						}
+						if out, ok := msg.(*dap.OutputEvent); ok {
+							outputs = append(outputs, out.Body.Output)
+						}
+					}
+				}
+				break loop
+			case <-timeout:
+				t.Fatal("timed out waiting for request to complete")
+			default:
+				conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+				msg, err := dap.ReadProtocolMessage(reader)
+				if err != nil {
+					continue
+				}
+				switch m := msg.(type) {
+				case *dap.OutputEvent:
+					outputs = append(outputs, m.Body.Output)
+				case *dap.StoppedEvent:
+					t.Fatal("logpoint should not produce a StoppedEvent")
+				}
+			}
+		}
+
+		require.GreaterOrEqual(t, len(outputs), 1, "expected at least one output event")
+		// array_sum(array_map(function($x) { return $x * 2; }, [10,20,30])) = 120
+		assert.Equal(t, "sum=120\n", outputs[0], "nested-brace expression should evaluate correctly")
+
+		dapSend(t, writer, &dap.DisconnectRequest{
+			Request: dap.Request{
+				ProtocolMessage: dap.ProtocolMessage{Seq: nextSeq(), Type: "request"},
+				Command:         "disconnect",
+			},
+		})
+		conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		dap.ReadProtocolMessage(reader)
+		frankenphp.ClearBreakpoints()
+	}, opts)
+}
+
 func propNames(vars []dap.Variable) []string {
 	names := make([]string, len(vars))
 	for i, v := range vars {

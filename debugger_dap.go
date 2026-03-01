@@ -88,6 +88,7 @@ func (s *dapServer) acceptLoop() {
 
 func (s *dapServer) eventLoop() {
 	bpChan := SubscribeBreakpoints()
+	outChan := SubscribeOutput()
 	for {
 		select {
 		case <-s.stopCh:
@@ -96,7 +97,7 @@ func (s *dapServer) eventLoop() {
 			if !ok {
 				return
 			}
-			threadId := hit.ThreadIndex + 1 // DAP thread IDs are 1-based
+			threadId := hit.ThreadIndex + 1
 
 			info := getThreadDebugInfo(hit.ThreadIndex)
 			reason := info.StopReason
@@ -117,6 +118,17 @@ func (s *dapServer) eventLoop() {
 			s.sendEvent(&dap.StoppedEvent{
 				Event: *s.newEvent("stopped"),
 				Body:  body,
+			})
+		case msg, ok := <-outChan:
+			if !ok {
+				return
+			}
+			s.sendEvent(&dap.OutputEvent{
+				Event: *s.newEvent("output"),
+				Body: dap.OutputEventBody{
+					Category: "console",
+					Output:   msg.Output + "\n",
+				},
 			})
 		}
 	}
@@ -199,15 +211,17 @@ func (s *dapServer) onInitialize(req *dap.InitializeRequest) {
 	s.sendResponse(&dap.InitializeResponse{
 		Response: *s.newResponse(req.Seq, req.Command),
 		Body: dap.Capabilities{
-			SupportsConfigurationDoneRequest: true,
-			SupportsFunctionBreakpoints:      false,
-			SupportsConditionalBreakpoints:   false,
-			SupportsEvaluateForHovers:        false,
-			SupportsStepBack:                 false,
-			SupportsSetVariable:              false,
-			SupportsRestartFrame:             false,
-			SupportsStepInTargetsRequest:     false,
-			SupportsDelayedStackTraceLoading: false,
+			SupportsConfigurationDoneRequest:  true,
+			SupportsFunctionBreakpoints:       false,
+			SupportsConditionalBreakpoints:    true,
+			SupportsHitConditionalBreakpoints: true,
+			SupportsLogPoints:                 true,
+			SupportsEvaluateForHovers:         false,
+			SupportsStepBack:                  false,
+			SupportsSetVariable:               false,
+			SupportsRestartFrame:              false,
+			SupportsStepInTargetsRequest:      false,
+			SupportsDelayedStackTraceLoading:  false,
 			ExceptionBreakpointFilters: []dap.ExceptionBreakpointsFilter{
 				{
 					Filter:  "uncaught",
@@ -251,7 +265,7 @@ func (s *dapServer) onSetBreakpoints(req *dap.SetBreakpointsRequest) {
 	bps := make([]dap.Breakpoint, len(req.Arguments.Breakpoints))
 	newIDs := make([]int, len(req.Arguments.Breakpoints))
 	for i, bp := range req.Arguments.Breakpoints {
-		id := SetBreakpoint(file, bp.Line)
+		id := SetBreakpoint(file, bp.Line, bp.Condition, bp.HitCondition, bp.LogMessage)
 		newIDs[i] = id
 		bps[i] = dap.Breakpoint{
 			Id:       id,

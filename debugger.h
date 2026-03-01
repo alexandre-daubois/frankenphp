@@ -44,6 +44,10 @@ typedef struct {
 	uint32_t lineno;
 	int id;
 	bool enabled;
+	char *condition;
+	char *hit_condition;
+	char *log_message;
+	uint32_t hit_count;
 } frankenphp_breakpoint_t;
 
 frankenphp_debug_frame_t *frankenphp_debugger_get_captured_frames(int *out_depth);
@@ -62,7 +66,10 @@ void frankenphp_debugger_pause_exception(const char *filename, uint32_t lineno,
 // cmd: 0=continue, 1=step_over, 2=step_into, 3=step_out
 void frankenphp_debugger_resume_thread(int thread_idx, int cmd);
 
-int frankenphp_debugger_add_breakpoint(const char *filename, uint32_t lineno);
+int frankenphp_debugger_add_breakpoint(const char *filename, uint32_t lineno,
+                                        const char *condition,
+                                        const char *hit_condition,
+                                        const char *log_message);
 bool frankenphp_debugger_remove_breakpoint(int breakpoint_id);
 void frankenphp_debugger_clear_breakpoints(void);
 

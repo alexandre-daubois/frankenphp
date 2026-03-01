@@ -1,0 +1,70 @@
+#ifndef FRANKENPHP_DEBUGGER_H
+#define FRANKENPHP_DEBUGGER_H
+
+#include <pthread.h>
+#include <stdbool.h>
+#include <stdatomic.h>
+#include <stdint.h>
+
+#include "php.h"
+#include "zend_compile.h"
+#include "zend_execute.h"
+
+extern _Atomic bool frankenphp_debugger_enabled;
+
+typedef enum {
+	DBG_RUNNING,
+	DBG_STEP_OVER,
+	DBG_STEP_INTO,
+	DBG_STEP_OUT,
+	DBG_PAUSED,
+} frankenphp_debug_mode_t;
+
+extern __thread frankenphp_debug_mode_t dbg_mode;
+extern __thread int dbg_step_depth;
+
+typedef struct {
+	const char *name;
+	uint8_t type;
+	zval *value;
+} frankenphp_debug_variable_t;
+
+typedef struct {
+	const char *filename;
+	const char *function_name;
+	const char *class_name;
+	uint32_t lineno;
+	int num_vars;
+	frankenphp_debug_variable_t *vars;
+} frankenphp_debug_frame_t;
+
+typedef struct {
+	char *filename;
+	uint32_t lineno;
+	int id;
+	bool enabled;
+} frankenphp_breakpoint_t;
+
+frankenphp_debug_frame_t *frankenphp_debugger_get_captured_frames(int *out_depth);
+frankenphp_debug_variable_t *frankenphp_debugger_get_captured_locals(int *out_count);
+
+void frankenphp_debugger_init(void);
+void frankenphp_debugger_init_thread(int idx);
+void frankenphp_debugger_shutdown(void);
+
+void frankenphp_debugger_pause(const char *filename, uint32_t lineno);
+
+// cmd: 0=continue, 1=step_over, 2=step_into, 3=step_out
+void frankenphp_debugger_resume_thread(int thread_idx, int cmd);
+
+int frankenphp_debugger_add_breakpoint(const char *filename, uint32_t lineno);
+bool frankenphp_debugger_remove_breakpoint(int breakpoint_id);
+void frankenphp_debugger_clear_breakpoints(void);
+
+int frankenphp_debugger_get_stack_depth(void);
+frankenphp_debug_frame_t *frankenphp_debugger_get_stack(int *out_depth);
+void frankenphp_debugger_free_stack(frankenphp_debug_frame_t *frames, int depth);
+frankenphp_debug_variable_t *frankenphp_debugger_get_locals(int *out_count);
+void frankenphp_debugger_free_locals(frankenphp_debug_variable_t *vars, int count);
+
+#endif

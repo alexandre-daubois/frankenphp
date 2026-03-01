@@ -1,4 +1,5 @@
 #include "frankenphp.h"
+#include "debugger.h"
 #include <SAPI.h>
 #include <Zend/zend_alloc.h>
 #include <Zend/zend_exceptions.h>
@@ -684,6 +685,19 @@ PHP_FUNCTION(frankenphp_log) {
   }
 }
 
+PHP_FUNCTION(frankenphp_breakpoint) {
+  ZEND_PARSE_PARAMETERS_NONE();
+
+  if (!atomic_load(&frankenphp_debugger_enabled)) {
+    return;
+  }
+
+  const char *filename = zend_get_executed_filename();
+  uint32_t lineno = zend_get_executed_lineno();
+
+  frankenphp_debugger_pause(filename, lineno);
+}
+
 PHP_MINIT_FUNCTION(frankenphp) {
   register_frankenphp_symbols(module_number);
 
@@ -707,18 +721,29 @@ PHP_MINIT_FUNCTION(frankenphp) {
     php_error(E_WARNING, "Failed to find built-in getenv function");
   }
 
+  if (atomic_load(&frankenphp_debugger_enabled)) {
+    frankenphp_debugger_init();
+  }
+
+  return SUCCESS;
+}
+
+PHP_RINIT_FUNCTION(frankenphp) {
+  if (atomic_load(&frankenphp_debugger_enabled)) {
+    CG(compiler_options) |= ZEND_COMPILE_EXTENDED_STMT;
+  }
   return SUCCESS;
 }
 
 static zend_module_entry frankenphp_module = {
     STANDARD_MODULE_HEADER,
     "frankenphp",
-    ext_functions,         /* function table */
-    PHP_MINIT(frankenphp), /* initialization */
-    NULL,                  /* shutdown */
-    NULL,                  /* request initialization */
-    NULL,                  /* request shutdown */
-    NULL,                  /* information */
+    ext_functions,          /* function table */
+    PHP_MINIT(frankenphp),  /* initialization */
+    NULL,                   /* shutdown */
+    PHP_RINIT(frankenphp),  /* request initialization */
+    NULL,                   /* request shutdown */
+    NULL,                   /* information */
     TOSTRING(FRANKENPHP_VERSION),
     STANDARD_MODULE_PROPERTIES};
 

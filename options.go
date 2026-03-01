@@ -30,6 +30,12 @@ type opt struct {
 	metrics     Metrics
 	phpIni      map[string]string
 	maxWaitTime time.Duration
+	debugger    debuggerOpt
+}
+
+type debuggerOpt struct {
+	enabled bool
+	listen  string
 }
 
 type workerOpt struct {
@@ -233,6 +239,18 @@ func WithWorkerOnServerStartup(f func()) WorkerOption {
 func WithWorkerOnServerShutdown(f func()) WorkerOption {
 	return func(w *workerOpt) error {
 		w.onServerShutdown = f
+
+		return nil
+	}
+}
+
+// WithDebugger enables the integrated PHP debugger listening on the given address.
+// The debugger uses the Debug Adapter Protocol (DAP).
+// When enabled, JIT is disabled and zend.enable_extended_info is turned on.
+func WithDebugger(listen string) Option {
+	return func(o *opt) error {
+		o.debugger.enabled = true
+		o.debugger.listen = listen
 
 		return nil
 	}

@@ -15,6 +15,7 @@ package frankenphp
 // #include <stdlib.h>
 // #include <stdint.h>
 // #include "frankenphp.h"
+// #include "debugger.h"
 // #include <php_variables.h>
 // #include <zend_llist.h>
 // #include <SAPI.h>
@@ -276,6 +277,21 @@ func Init(options ...Option) error {
 
 	maxWaitTime = opt.maxWaitTime
 
+	if opt.debugger.enabled {
+		if opt.phpIni == nil {
+			opt.phpIni = make(map[string]string)
+		}
+		opt.phpIni["opcache.jit"] = "off"
+		opt.phpIni["zend.enable_extended_info"] = "1"
+
+		C.frankenphp_debugger_enabled = C.bool(true)
+		initDebugger()
+
+		if globalLogger.Enabled(globalCtx, slog.LevelInfo) {
+			globalLogger.LogAttrs(globalCtx, slog.LevelInfo, "debugger enabled, JIT disabled, listening for DAP connections", slog.String("listen", opt.debugger.listen))
+		}
+	}
+
 	workerThreadCount, err := calculateMaxThreads(opt)
 	if err != nil {
 		Shutdown()
@@ -329,6 +345,13 @@ func Init(options ...Option) error {
 	}
 
 	initAutoScaling(mainThread)
+
+	if opt.debugger.enabled {
+		if err := startDebugServer(opt.debugger.listen); err != nil {
+			Shutdown()
+			return err
+		}
+	}
 
 	if globalLogger.Enabled(globalCtx, slog.LevelInfo) {
 		globalLogger.LogAttrs(globalCtx, slog.LevelInfo, "FrankenPHP started 🐘", slog.String("php_version", Version().Version), slog.Int("num_threads", mainThread.numThreads), slog.Int("max_threads", mainThread.maxThreads))

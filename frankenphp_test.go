@@ -1289,3 +1289,262 @@ func TestSessionNoLeakAfterExit_worker(t *testing.T) {
 		realServer:         true,
 	})
 }
+
+func debuggerTestOpts() *testOptions {
+	return &testOptions{
+		nbParallelRequests: 1,
+		initOpts:           []frankenphp.Option{frankenphp.WithDebugger(":0")},
+	}
+}
+
+func TestDebuggerBreakpointHitAndContinue(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(handler func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		bpChan := frankenphp.SubscribeBreakpoints()
+
+		cwd, _ := os.Getwd()
+		bpFile := filepath.Join(cwd, "testdata", "debugger-breakpoint.php")
+		frankenphp.SetBreakpoint(bpFile, 3)
+
+		type result struct {
+			body string
+			resp *http.Response
+		}
+		done := make(chan result, 1)
+		go func() {
+			body, resp := testGet("http://example.com/debugger-breakpoint.php", handler, t)
+			done <- result{body, resp}
+		}()
+
+		select {
+		case hit := <-bpChan:
+			assert.Contains(t, hit.File, "debugger-breakpoint.php")
+			assert.Equal(t, 3, hit.Line)
+
+			debugState := frankenphp.DebugState()
+			found := false
+			for _, ts := range debugState.ThreadDebugStates {
+				if ts.IsDebugPaused {
+					found = true
+					assert.Contains(t, ts.PausedFile, "debugger-breakpoint.php")
+					break
+				}
+			}
+			assert.True(t, found, "expected a thread in DebugPaused state")
+
+			frankenphp.ContinueThread(hit.ThreadIndex)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for breakpoint hit")
+		}
+
+		select {
+		case r := <-done:
+			assert.Equal(t, "result=30", r.body)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for request to complete")
+		}
+
+		frankenphp.ClearBreakpoints()
+	}, opts)
+}
+
+func TestDebuggerStackTrace(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(handler func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		bpChan := frankenphp.SubscribeBreakpoints()
+
+		cwd, _ := os.Getwd()
+		bpFile := filepath.Join(cwd, "testdata", "debugger-breakpoint.php")
+		frankenphp.SetBreakpoint(bpFile, 4)
+
+		done := make(chan string, 1)
+		go func() {
+			body, _ := testGet("http://example.com/debugger-breakpoint.php", handler, t)
+			done <- body
+		}()
+
+		select {
+		case hit := <-bpChan:
+			frames := frankenphp.GetStackTrace(hit.ThreadIndex)
+			assert.NotEmpty(t, frames, "stack trace should not be empty")
+			assert.Contains(t, frames[0].File, "debugger-breakpoint.php")
+
+			frankenphp.ContinueThread(hit.ThreadIndex)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for breakpoint hit")
+		}
+
+		select {
+		case body := <-done:
+			assert.Equal(t, "result=30", body)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for request to complete")
+		}
+
+		frankenphp.ClearBreakpoints()
+	}, opts)
+}
+
+func TestDebuggerLocals(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(handler func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		bpChan := frankenphp.SubscribeBreakpoints()
+
+		cwd, _ := os.Getwd()
+		bpFile := filepath.Join(cwd, "testdata", "debugger-breakpoint.php")
+		frankenphp.SetBreakpoint(bpFile, 4)
+
+		done := make(chan string, 1)
+		go func() {
+			body, _ := testGet("http://example.com/debugger-breakpoint.php", handler, t)
+			done <- body
+		}()
+
+		select {
+		case hit := <-bpChan:
+			locals := frankenphp.GetLocals(hit.ThreadIndex)
+			assert.NotEmpty(t, locals, "locals should not be empty")
+
+			varNames := make(map[string]frankenphp.DebugVariable)
+			for _, v := range locals {
+				varNames[v.Name] = v
+			}
+			if xVar, ok := varNames["x"]; ok {
+				assert.Equal(t, "int", xVar.Type)
+			} else {
+				t.Error("expected local variable $x")
+			}
+			if yVar, ok := varNames["y"]; ok {
+				assert.Equal(t, "int", yVar.Type)
+			} else {
+				t.Error("expected local variable $y")
+			}
+
+			frankenphp.ContinueThread(hit.ThreadIndex)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for breakpoint hit")
+		}
+
+		select {
+		case body := <-done:
+			assert.Equal(t, "result=30", body)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for request to complete")
+		}
+
+		frankenphp.ClearBreakpoints()
+	}, opts)
+}
+
+func TestDebuggerStepOver(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(handler func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		bpChan := frankenphp.SubscribeBreakpoints()
+
+		cwd, _ := os.Getwd()
+		bpFile := filepath.Join(cwd, "testdata", "debugger-breakpoint.php")
+		bpID := frankenphp.SetBreakpoint(bpFile, 2)
+
+		done := make(chan string, 1)
+		go func() {
+			body, _ := testGet("http://example.com/debugger-breakpoint.php", handler, t)
+			done <- body
+		}()
+
+		// Wait for initial breakpoint hit on line 2
+		select {
+		case hit := <-bpChan:
+			assert.Equal(t, 2, hit.Line)
+			// Remove breakpoint before stepping to avoid re-triggering on same line
+			frankenphp.RemoveBreakpoint(bpID)
+			frankenphp.StepOver(hit.ThreadIndex)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for initial breakpoint hit")
+		}
+
+		// Wait for step to land on next line
+		select {
+		case hit := <-bpChan:
+			assert.Contains(t, hit.File, "debugger-breakpoint.php")
+			assert.Equal(t, 3, hit.Line)
+			frankenphp.ContinueThread(hit.ThreadIndex)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for step over hit")
+		}
+
+		select {
+		case body := <-done:
+			assert.Equal(t, "result=30", body)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for request to complete")
+		}
+
+		frankenphp.ClearBreakpoints()
+	}, opts)
+}
+
+func TestDebuggerBreakpointSetRemoveClear(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(_ func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		id1 := frankenphp.SetBreakpoint("/test/file.php", 10)
+		id2 := frankenphp.SetBreakpoint("/test/file.php", 20)
+
+		bps := frankenphp.ListBreakpoints()
+		assert.Len(t, bps, 2)
+
+		ok := frankenphp.RemoveBreakpoint(id1)
+		assert.True(t, ok)
+		bps = frankenphp.ListBreakpoints()
+		assert.Len(t, bps, 1)
+		assert.Equal(t, id2, bps[0].ID)
+
+		frankenphp.ClearBreakpoints()
+		bps = frankenphp.ListBreakpoints()
+		assert.Empty(t, bps)
+	}, opts)
+}
+
+func TestDebuggerWorkerBreakpoint(t *testing.T) {
+	opts := debuggerTestOpts()
+	opts.workerScript = "debugger-worker-breakpoint.php"
+	opts.nbWorkers = 1
+	runTest(t, func(handler func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		bpChan := frankenphp.SubscribeBreakpoints()
+
+		cwd, _ := os.Getwd()
+		bpFile := filepath.Join(cwd, "testdata", "debugger-worker-breakpoint.php")
+		frankenphp.SetBreakpoint(bpFile, 5)
+
+		done := make(chan string, 1)
+		go func() {
+			body, _ := testGet("http://example.com/debugger-worker-breakpoint.php", handler, t)
+			done <- body
+		}()
+
+		select {
+		case hit := <-bpChan:
+			assert.Contains(t, hit.File, "debugger-worker-breakpoint.php")
+			frankenphp.ContinueThread(hit.ThreadIndex)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for worker breakpoint hit")
+		}
+
+		select {
+		case body := <-done:
+			assert.Equal(t, "count=1", body)
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for worker request to complete")
+		}
+
+		frankenphp.ClearBreakpoints()
+	}, opts)
+}
+
+func TestDebuggerStatus(t *testing.T) {
+	opts := debuggerTestOpts()
+	runTest(t, func(_ func(http.ResponseWriter, *http.Request), _ *httptest.Server, _ int) {
+		status := frankenphp.DebuggerStatus()
+		assert.True(t, status.Enabled)
+		assert.NotEmpty(t, status.DAPListen)
+	}, opts)
+}

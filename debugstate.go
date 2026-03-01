@@ -12,6 +12,9 @@ type ThreadDebugState struct {
 	IsWaiting                bool
 	IsBusy                   bool
 	WaitingSinceMilliseconds int64
+	IsDebugPaused            bool   `json:",omitempty"`
+	PausedFile               string `json:",omitempty"`
+	PausedLine               int    `json:",omitempty"`
 }
 
 // EXPERIMENTAL: FrankenPHPDebugState prints the state of all PHP threads - debugging purposes only
@@ -39,12 +42,21 @@ func DebugState() FrankenPHPDebugState {
 
 // threadDebugState creates a small jsonable status message for debugging purposes
 func threadDebugState(thread *phpThread) ThreadDebugState {
-	return ThreadDebugState{
+	tds := ThreadDebugState{
 		Index:                    thread.threadIndex,
 		Name:                     thread.name(),
 		State:                    thread.state.Name(),
 		IsWaiting:                thread.state.IsInWaitingState(),
 		IsBusy:                   !thread.state.IsInWaitingState(),
 		WaitingSinceMilliseconds: thread.state.WaitTime(),
+		IsDebugPaused:            thread.state.Is(state.DebugPaused),
 	}
+
+	if tds.IsDebugPaused {
+		info := getThreadDebugInfo(thread.threadIndex)
+		tds.PausedFile = info.File
+		tds.PausedLine = info.Line
+	}
+
+	return tds
 }

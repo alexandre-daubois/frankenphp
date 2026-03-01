@@ -55,11 +55,17 @@ type FrankenPHPApp struct {
 	PhpIni map[string]string `json:"php_ini,omitempty"`
 	// The maximum amount of time a request may be stalled waiting for a thread
 	MaxWaitTime time.Duration `json:"max_wait_time,omitempty"`
+	// Debug enables the integrated debugger
+	Debug *debugConfig `json:"debug,omitempty"`
 
 	opts    []frankenphp.Option
 	metrics frankenphp.Metrics
 	ctx     context.Context
 	logger  *slog.Logger
+}
+
+type debugConfig struct {
+	Listen string `json:"listen,omitempty"`
 }
 
 var iniError = errors.New(`"php_ini" must be in the format: php_ini "<key>" "<value>"`)
@@ -151,6 +157,10 @@ func (f *FrankenPHPApp) Start() error {
 		frankenphp.WithPhpIni(f.PhpIni),
 		frankenphp.WithMaxWaitTime(f.MaxWaitTime),
 	)
+
+	if f.Debug != nil {
+		f.opts = append(f.opts, frankenphp.WithDebugger(f.Debug.Listen))
+	}
 
 	for _, w := range f.Workers {
 		w.options = append(w.options,
@@ -278,6 +288,19 @@ func (f *FrankenPHPApp) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					}
 				}
 
+			case "debug":
+				f.Debug = &debugConfig{Listen: ":9003"}
+				for d.NextBlock(1) {
+					switch d.Val() {
+					case "listen":
+						if !d.NextArg() {
+							return d.ArgErr()
+						}
+						f.Debug.Listen = d.Val()
+					default:
+						return wrongSubDirectiveError("debug", "listen", d.Val())
+					}
+				}
 			case "worker":
 				wc, err := unmarshalWorker(d)
 				if err != nil {
@@ -298,7 +321,7 @@ func (f *FrankenPHPApp) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 
 				f.Workers = append(f.Workers, wc)
 			default:
-				return wrongSubDirectiveError("frankenphp", "num_threads, max_threads, php_ini, worker, max_wait_time", d.Val())
+				return wrongSubDirectiveError("frankenphp", "num_threads, max_threads, php_ini, worker, max_wait_time, debug", d.Val())
 			}
 		}
 	}

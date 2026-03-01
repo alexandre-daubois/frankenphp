@@ -41,6 +41,9 @@ ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_frankenphp_log, 0, 1, IS_VOID, 0
 	ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, context, IS_ARRAY, 0, "[]")
 ZEND_END_ARG_INFO()
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_frankenphp_breakpoint, 0, 0, IS_VOID, 0)
+ZEND_END_ARG_INFO()
+
 
 ZEND_FUNCTION(frankenphp_handle_request);
 ZEND_FUNCTION(headers_send);
@@ -49,6 +52,7 @@ ZEND_FUNCTION(frankenphp_request_headers);
 ZEND_FUNCTION(frankenphp_response_headers);
 ZEND_FUNCTION(mercure_publish);
 ZEND_FUNCTION(frankenphp_log);
+ZEND_FUNCTION(frankenphp_breakpoint);
 
 
 static const zend_function_entry ext_functions[] = {
@@ -63,6 +67,7 @@ static const zend_function_entry ext_functions[] = {
 	ZEND_FALIAS(apache_response_headers, frankenphp_response_headers, arginfo_apache_response_headers)
 	ZEND_FE(mercure_publish, arginfo_mercure_publish)
 	ZEND_FE(frankenphp_log, arginfo_frankenphp_log)
+	ZEND_FE(frankenphp_breakpoint, arginfo_frankenphp_breakpoint)
 	ZEND_FE_END
 };
 

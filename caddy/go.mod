@@ -10,7 +10,7 @@ require (
 	github.com/caddyserver/caddy/v2 v2.11.1
 	github.com/caddyserver/certmagic v0.25.2
 	github.com/dunglas/caddy-cbrotli v1.0.1
-	github.com/dunglas/frankenphp v1.11.3
+	github.com/dunglas/frankenphp v0.0.0
 	github.com/dunglas/mercure v0.21.8
 	github.com/dunglas/mercure/caddy v0.21.8
 	github.com/dunglas/vulcain/caddy v1.2.1
@@ -86,6 +86,7 @@ require (
 	github.com/google/brotli/go/cbrotli v1.1.0 // indirect
 	github.com/google/cel-go v0.27.0 // indirect
 	github.com/google/certificate-transparency-go v1.3.2 // indirect
+	github.com/google/go-dap v0.12.0 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/google/go-tspi v0.3.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect

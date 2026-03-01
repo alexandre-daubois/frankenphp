@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dunglas/frankenphp/internal/fastabs"
 
@@ -301,4 +302,136 @@ func TestAddModuleWorkerViaAdminApi(t *testing.T) {
 
 	// Make a request to the worker to verify it's working
 	tester.AssertGetResponse("http://localhost:"+testPort+"/worker-with-counter.php", http.StatusOK, "requests:1")
+}
+
+func postAdminJSON(t *testing.T, tester *caddytest.Tester, path string, body string) *http.Response {
+	t.Helper()
+	adminUrl := "http://localhost:2999/frankenphp/"
+	r, err := http.NewRequest("POST", adminUrl+path, bytes.NewBufferString(body))
+	assert.NoError(t, err)
+	r.Header.Set("Content-Type", "application/json")
+	return tester.AssertResponseCode(r, http.StatusOK)
+}
+
+func deleteAdmin(t *testing.T, tester *caddytest.Tester, path string) *http.Response {
+	t.Helper()
+	adminUrl := "http://localhost:2999/frankenphp/"
+	r, err := http.NewRequest("DELETE", adminUrl+path, nil)
+	assert.NoError(t, err)
+	return tester.AssertResponseCode(r, http.StatusOK)
+}
+
+func initDebugServer(t *testing.T) *caddytest.Tester {
+	t.Helper()
+	tester := caddytest.NewTester(t)
+	tester.InitServer(`
+		{
+			skip_install_trust
+			admin localhost:2999
+			http_port `+testPort+`
+
+			frankenphp {
+				debug {
+					listen :0
+				}
+			}
+		}
+
+		localhost:`+testPort+` {
+			route {
+				root ../testdata
+				php
+			}
+		}
+		`, "caddyfile")
+	return tester
+}
+
+func TestDebugAdminStatus(t *testing.T) {
+	tester := initDebugServer(t)
+
+	body := getAdminResponseBody(t, tester, "GET", "debug/status")
+	var status frankenphp.DebuggerStatusInfo
+	err := json.Unmarshal([]byte(body), &status)
+	assert.NoError(t, err)
+	assert.True(t, status.Enabled)
+	assert.NotEmpty(t, status.DAPListen)
+}
+
+func TestDebugAdminBreakpointsCRUD(t *testing.T) {
+	tester := initDebugServer(t)
+
+	resp := postAdminJSON(t, tester, "debug/breakpoints", `{"file":"/test.php","line":10}`)
+	respBody, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	var bp frankenphp.BreakpointInfo
+	err := json.Unmarshal(respBody, &bp)
+	assert.NoError(t, err)
+	assert.Equal(t, 10, bp.Line)
+	assert.NotZero(t, bp.ID)
+
+	body := getAdminResponseBody(t, tester, "GET", "debug/breakpoints")
+	var bps []frankenphp.BreakpointInfo
+	err = json.Unmarshal([]byte(body), &bps)
+	assert.NoError(t, err)
+	assert.Len(t, bps, 1)
+
+	deleteAdmin(t, tester, fmt.Sprintf("debug/breakpoints?id=%d", bp.ID))
+
+	body = getAdminResponseBody(t, tester, "GET", "debug/breakpoints")
+	err = json.Unmarshal([]byte(body), &bps)
+	assert.NoError(t, err)
+	assert.Empty(t, bps)
+
+	postAdminJSON(t, tester, "debug/breakpoints", `{"file":"/a.php","line":1}`)
+	postAdminJSON(t, tester, "debug/breakpoints", `{"file":"/b.php","line":2}`)
+	deleteAdmin(t, tester, "debug/breakpoints")
+	body = getAdminResponseBody(t, tester, "GET", "debug/breakpoints")
+	err = json.Unmarshal([]byte(body), &bps)
+	assert.NoError(t, err)
+	assert.Empty(t, bps)
+}
+
+func TestDebugAdminBreakpointAndContinue(t *testing.T) {
+	tester := initDebugServer(t)
+
+	postAdminJSON(t, tester, "debug/breakpoints", `{"file":"../testdata/debugger-breakpoint.php","line":3}`)
+
+	done := make(chan string, 1)
+	go func() {
+		resp, err := http.Get("http://localhost:" + testPort + "/debugger-breakpoint.php")
+		if err != nil {
+			done <- "error: " + err.Error()
+			return
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		done <- string(body)
+	}()
+
+	var pausedThread int
+	found := false
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		body := getAdminResponseBody(t, tester, "GET", "debug/threads")
+		var threads []frankenphp.ThreadDebugState
+		_ = json.Unmarshal([]byte(body), &threads)
+		if len(threads) > 0 {
+			pausedThread = threads[0].Index
+			found = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	assert.True(t, found, "expected a paused thread within timeout")
+
+	postAdminJSON(t, tester, "debug/continue", fmt.Sprintf(`{"thread":%d,"action":"continue"}`, pausedThread))
+
+	select {
+	case body := <-done:
+		assert.Equal(t, "result=30", body)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for request to complete after continue")
+	}
 }

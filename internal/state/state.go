@@ -30,6 +30,9 @@ const (
 	TransitionRequested
 	TransitionInProgress
 	TransitionComplete
+
+	// State for the integrated debugger
+	DebugPaused
 )
 
 func (s State) String() string {
@@ -58,6 +61,8 @@ func (s State) String() string {
 		return "transition in progress"
 	case TransitionComplete:
 		return "transition complete"
+	case DebugPaused:
+		return "debug paused"
 	default:
 		return "unknown"
 	}

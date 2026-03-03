@@ -149,10 +149,10 @@ route {
         try_files {path} {path}/index.php index.php
         split_path .php
     }
-    rewrite @indexFiles {http.matchers.file.relative}
+    rewrite @indexFiles {http.matchers.file.relative}{http.matchers.file.remainder}
 
     # FrankenPHP!
-    @phpFiles path *.php
+    @phpFiles path *.php *.php/*
     php @phpFiles
     file_server
 }

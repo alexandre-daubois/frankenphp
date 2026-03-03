@@ -358,10 +358,10 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 //		    try_files {path} {path}/index.php index.php
 //		    split_path .php
 //		}
-//		rewrite @indexFiles {http.matchers.file.relative}
+//		rewrite @indexFiles {http.matchers.file.relative}{http.matchers.file.remainder}
 //
 //		# FrankenPHP!
-//		@phpFiles path *.php
+//		@phpFiles path *.php *.php/*
 //	 	php @phpFiles
 //		file_server
 //
@@ -559,7 +559,7 @@ func parsePhpServer(h httpcaddyfile.Helper) ([]httpcaddyfile.ConfigValue, error)
 			}),
 		}
 		rewriteHandler := rewrite.Rewrite{
-			URI: "{http.matchers.file.relative}",
+			URI: "{http.matchers.file.relative}{http.matchers.file.remainder}",
 		}
 		rewriteRoute := caddyhttp.Route{
 			MatcherSetsRaw: []caddy.ModuleMap{rewriteMatcherSet},
@@ -574,6 +574,7 @@ func parsePhpServer(h httpcaddyfile.Helper) ([]httpcaddyfile.ConfigValue, error)
 	var pathList []string
 	for _, ext := range extensions {
 		pathList = append(pathList, "*"+ext)
+		pathList = append(pathList, "*"+ext+"/*")
 	}
 	phpMatcherSet := caddy.ModuleMap{
 		"path": h.JSON(pathList),

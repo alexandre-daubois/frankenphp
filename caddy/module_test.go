@@ -9,6 +9,28 @@ import (
 	"github.com/caddyserver/caddy/v2/caddytest"
 )
 
+func TestPathInfoWithPhpServer(t *testing.T) {
+	tester := caddytest.NewTester(t)
+	host := "http://localhost:" + testPort
+	tester.InitServer(`
+		{
+			skip_install_trust
+			admin localhost:2999
+			http_port `+testPort+`
+		}
+		`+host+` {
+			root ../testdata
+			php_server
+		}
+		`, "caddyfile")
+
+	// PATH_INFO should be set when requesting /pathinfo.php/some/path
+	tester.AssertGetResponse(host+"/pathinfo.php/some/path", http.StatusOK, "/some/path")
+
+	// PATH_INFO should be empty when requesting just /pathinfo.php
+	tester.AssertGetResponse(host+"/pathinfo.php", http.StatusOK, "")
+}
+
 func TestRootBehavesTheSameOutsideAndInsidePhpServer(t *testing.T) {
 	tester := caddytest.NewTester(t)
 	testPortNum, _ := strconv.Atoi(testPort)

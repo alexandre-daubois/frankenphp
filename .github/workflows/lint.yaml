@@ -30,7 +30,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           LINTER_RULES_PATH: /
           MARKDOWN_CONFIG_FILE: .markdown-lint.yaml
-          FILTER_REGEX_EXCLUDE: docs/(cn|es|fr|ja|pt-br|ru|tr)/
+          # watcher/ holds the third-party e-dant/watcher sources, not ours to lint
+          FILTER_REGEX_EXCLUDE: ^(docs/(cn|es|fr|ja|pt-br|ru|tr)|watcher)/
+          # Strip the workspace prefix so the ^ anchors above match the relative path
+          STRIP_DEFAULT_WORKSPACE_FOR_REGEX: true
           VALIDATE_CPP: false
           VALIDATE_JSCPD: false
           VALIDATE_GO: false

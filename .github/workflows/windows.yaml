@@ -3,7 +3,7 @@ name: Build Windows release
 
 concurrency:
   cancel-in-progress: true
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.run_id }}
 
 on:
   pull_request:

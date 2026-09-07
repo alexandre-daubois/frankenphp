@@ -70,6 +70,11 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	// A config reload can leave the shared Caddy admin endpoint (:2999) stuck in an
+	// endless "accept: i/o timeout" loop on Windows; a client timeout keeps a wedged
+	// endpoint from escalating into a package-wide test timeout.
+	http.DefaultClient.Timeout = 60 * time.Second
+
 	os.Exit(m.Run())
 }
 
